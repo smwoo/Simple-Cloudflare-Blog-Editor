@@ -1,0 +1,58 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+      # Media tests that need the reference library skip automatically; the
+      # serializer and site tests always run.
+      - run: npm test
+
+  package:
+    # Cross-compiling is a dead end here: Windows installers built on macOS hit
+    # wine friction, and macOS notarization only runs on macOS. One job per host.
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+            cmd: pack:mac
+          - os: windows-latest
+            platform: win32
+            arch: x64
+            cmd: pack:win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: Fetch bundled binaries
+        run: node scripts/fetch-binaries.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+      - name: Smoke test the renderer
+        if: matrix.os == 'macos-latest'
+        run: npm run smoke
+      - run: npm run ${{ matrix.cmd }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/*.dmg
+            release/*.exe
+            release/latest*.yml

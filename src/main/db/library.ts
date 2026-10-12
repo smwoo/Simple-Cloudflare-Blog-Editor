@@ -1,0 +1,121 @@
+/**
+ * The asset library.
+ *
+ * Backed by a JSON file rather than SQLite. At this scale — a personal blog
+ * accumulating a few thousand assets over years — a JSON document is entirely
+ * adequate, and it removes a native dependency that would otherwise need an
+ * electron-rebuild for every platform and architecture. The interface below is
+ * deliberately narrow so swapping in SQLite later is a contained change.
+ */
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+import type { Asset, AssetState } from '../../shared/types.js'
+
+interface LibraryFile {
+  version: 1
+  assets: Record<string, Asset>
+}
+
+export class Library {
+  private data: LibraryFile = { version: 1, assets: {} }
+  private writing: Promise<void> = Promise.resolve()
+
+  private constructor(private file: string) {}
+
+  static async open(file: string): Promise<Library> {
+    const lib = new Library(file)
+    await mkdir(path.dirname(file), { recursive: true })
+    if (existsSync(file)) {
+      try {
+        lib.data = JSON.parse(await readFile(file, 'utf8'))
+      } catch {
+        // A corrupt library is rebuildable from disk and the bucket, so losing
+        // it is survivable — refusing to start is not.
+        lib.data = { version: 1, assets: {} }
+      }
+    }
+    return lib
+  }
+
+  /** Writes are serialised and atomic: a crash mid-save must not truncate it. */
+  private save(): Promise<void> {
+    this.writing = this.writing.then(async () => {
+      const tmp = `${this.file}.tmp`
+      await writeFile(tmp, JSON.stringify(this.data, null, 2), 'utf8')
+      await rename(tmp, this.file)
+    })
+    return this.writing
+  }
+
+  get(key: string): Asset | undefined {
+    return this.data.assets[key]
+  }
+
+  all(): Asset[] {
+    return Object.values(this.data.assets).sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  forPost(slug: string): Asset[] {
+    return this.all().filter((a) => a.postSlug === slug)
+  }
+
+  /** Every key in use, so allocateKey() never collides. */
+  takenKeys(): Set<string> {
+    return new Set(Object.keys(this.data.assets))
+  }
+
+  async put(asset: Asset): Promise<void> {
+    this.data.assets[asset.key] = asset
+    await this.save()
+  }
+
+  async update(key: string, patch: Partial<Asset>): Promise<Asset | undefined> {
+    const current = this.data.assets[key]
+    if (!current) return undefined
+    const next = { ...current, ...patch }
+    this.data.assets[key] = next
+    await this.save()
+    return next
+  }
+
+  async setState(key: string, state: AssetState, error?: string): Promise<void> {
+    await this.update(key, { state, error })
+  }
+
+  async remove(key: string): Promise<void> {
+    delete this.data.assets[key]
+    await this.save()
+  }
+
+  /**
+   * Assets uploaded but referenced by no post.
+   *
+   * Someone drags in 40 photos, places 25, and forgets 15. Without surfacing
+   * this, those sit in their storage forever — paid for and invisible.
+   */
+  unplaced(referenced: ReadonlySet<string>): Asset[] {
+    return this.all().filter((a) => !referenced.has(a.key))
+  }
+
+  /** Assets a post references that the library has never heard of. */
+  missing(referenced: ReadonlySet<string>): string[] {
+    return [...referenced].filter((k) => !this.data.assets[k])
+  }
+
+  /** Anything not yet live blocks publishing. */
+  pending(keys: ReadonlySet<string>): Asset[] {
+    return this.all().filter((a) => keys.has(a.key) && a.state !== 'live')
+  }
+
+  stats(): { count: number; bytesOriginal: number; bytesOutput: number } {
+    let bytesOriginal = 0
+    let bytesOutput = 0
+    const assets = this.all()
+    for (const a of assets) {
+      bytesOriginal += a.bytesOriginal
+      bytesOutput += a.bytesOutput ?? 0
+    }
+    return { count: assets.length, bytesOriginal, bytesOutput }
+  }
+}

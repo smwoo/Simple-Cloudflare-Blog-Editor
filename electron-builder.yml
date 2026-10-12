@@ -1,0 +1,62 @@
+appId: com.blogeditor.app
+productName: Blog Editor
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+  # sharp resolves its own @img/sharp-<platform> package at runtime, so the
+  # native bindings must ship unpacked rather than inside the asar.
+asarUnpack:
+  - node_modules/sharp/**
+  - node_modules/@img/**
+
+extraResources:
+  # The bundled binaries, fetched by scripts/fetch-binaries.mjs. Only the
+  # current platform's directory is included.
+  - from: resources/bin/${platform}-${arch}
+    to: bin
+  - from: resources/site-template
+    to: site-template
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  # Gatekeeper gives no "run anyway" button at all for an un-notarized app, so
+  # for anyone other than the author this needs the $99/yr Apple Developer
+  # Program and notarization. Unlike Windows there is no reputation period:
+  # once notarized it simply works. See CODE-SIGNING.md.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false
+
+win:
+  target:
+    # x64 only: neither hugo_extended nor workerd publishes a windows-arm64
+    # build, and Windows on ARM runs x64 under emulation.
+    - target: nsis
+      arch: [x64]
+  # Unsigned. An OV certificate would not remove the SmartScreen warning at this
+  # audience size, because reputation accrues through download volume a handful
+  # of installs can never reach. Do the first install in person and rely on
+  # electron-updater afterwards. See CODE-SIGNING.md.
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+
+publish:
+  # electron-updater's generic provider: a static HTTPS directory of installers
+  # plus latest.yml. Host this in YOUR account, never in a user's own bucket.
+  #
+  # If served from R2: latest.yml MUST be no-cache. Under the media default of
+  # max-age=31536000, immutable it would pin everyone to the first version they
+  # ever saw, permanently and silently.
+  provider: generic
+  url: https://updates.example.com/blog-editor/

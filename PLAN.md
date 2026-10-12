@@ -17,6 +17,47 @@ its measurements are used below to justify design decisions.
 
 ---
 
+## Implementation status
+
+Phases 0–4 are built. `npm test` runs 46 tests; `npm run typecheck` and
+`npm run smoke` are clean. See [README.md](./README.md) for the layout.
+
+**Verified working end to end, locally:** the document model serialises to Hugo
+markdown and parses back identically; sharp converts real photos with the ICC
+profile intact and EXIF orientation baked in; the site scaffolds, builds in
+~50 ms and renders the three shortcodes with root-relative media paths; the
+Electron app boots and renders Setup mode with no console errors.
+
+**Not yet exercised against a live account:** provisioning, Worker deploy, R2
+upload and custom-domain attachment are written but untested without real
+Cloudflare credentials. That is Phase 0's gate and remains the first thing to
+run.
+
+### Deviations from the design above, and why
+
+1. **The asset library is a JSON file, not SQLite.** At a few thousand assets a
+   JSON document is entirely adequate, and it removes a native dependency that
+   would otherwise need an `electron-rebuild` for every platform and
+   architecture. `Library`'s interface is narrow enough that swapping in SQLite
+   later is contained.
+2. **The Hugo theme is written from scratch, not vendored from PaperMod.** Since
+   the app ships the site template, a small self-contained theme is simpler than
+   vendoring a large one — and it has no CDN dependencies, where the reference
+   site pulls GLightbox from jsDelivr. The lightbox is ~20 lines inline.
+3. **The site template sets `buildFuture: true`.** Found while testing: a post
+   dated in the future is silently dropped by Hugo, so the owner would hit
+   Publish, see success, and find nothing on the site. Exactly the invisible
+   failure this app exists to avoid.
+4. **`BLOG_EDITOR_SMOKE` renders once, screenshots, and asserts no console
+   errors.** A renderer that throws on boot now fails CI rather than shipping a
+   blank window.
+5. **AVIF quality defaults to sharp's 62**, which produced 191 KB against the
+   reference pipeline's 328 KB on the same photo. Quality numbers do not
+   transfer between encoders, so this still needs the visual calibration pass in
+   Phase 2's gate before shipping.
+
+---
+
 ## 1. Principles
 
 1. **The app does the technical work, not the user.** Every resource it needs, it
