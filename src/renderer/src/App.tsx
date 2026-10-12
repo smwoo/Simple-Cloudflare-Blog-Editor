@@ -5,9 +5,9 @@ import { Library } from './library/Library.js'
 import { Setup } from './setup/Setup.js'
 import { GroupDialog } from './panes/GroupDialog.js'
 import { Settings } from './panes/Settings.js'
-import { assetStore } from './editor/assetStore.js'
+import { assetStore, useAssets } from './editor/assetStore.js'
 import { appendToGalleryOrInsert, insertAssets } from './editor/insert.js'
-import type { Post, PMNode, BlogConfig } from '../../shared/types.js'
+import type { Post, PMNode, BlogConfig, Asset } from '../../shared/types.js'
 
 const EMPTY_DOC: PMNode = { type: 'doc', content: [{ type: 'paragraph' }] }
 
@@ -35,6 +35,7 @@ export function App() {
   const [banner, setBanner] = useState<{ kind: 'ok' | 'err' | 'warn'; text: string; log?: string } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [previewOrigin, setPreviewOrigin] = useState<string | null>(null)
+  const assets = useAssets()
 
   // ---------------------------------------------------------------- boot
 
@@ -211,7 +212,7 @@ export function App() {
 
   const config: BlogConfig = status.config
   const groupSuggestions = [
-    ...new Set(assetStore.snapshot().filter((a) => a.postSlug === current?.slug).map((a) => a.group)),
+    ...new Set(assets.filter((a) => a.postSlug === current?.slug).map((a) => a.group)),
   ]
 
   return (
@@ -303,6 +304,7 @@ export function App() {
                   <label>Cover photo</label>
                   <CoverPicker
                     cover={current.frontMatter.cover}
+                    assets={assets}
                     postSlug={current.slug}
                     onPick={(cover) => patchPost((p) => ({ frontMatter: { ...p.frontMatter, cover } }))}
                   />
@@ -409,13 +411,15 @@ function publishLabel(p: { phase: string; detail?: string }): string {
 function CoverPicker({
   cover,
   postSlug,
+  assets,
   onPick,
 }: {
   cover?: string
   postSlug: string
+  assets: Asset[]
   onPick: (key: string | undefined) => void
 }) {
-  const assets = assetStore.snapshot().filter((a) => a.postSlug === postSlug && a.kind === 'image')
+  const options = assets.filter((a) => a.postSlug === postSlug && a.kind === 'image')
   return (
     <select
       value={cover ?? ''}
@@ -423,7 +427,7 @@ function CoverPicker({
       style={{ padding: '7px 9px' }}
     >
       <option value="">None</option>
-      {assets.map((a) => (
+      {options.map((a) => (
         <option key={a.key} value={a.key}>
           {a.key.split('/').slice(1).join('/')}
         </option>
