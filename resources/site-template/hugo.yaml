@@ -1,0 +1,16 @@
+baseURL: "__BASE_URL__"
+locale: en-us
+title: "__TITLE__"
+theme: []
+# A post dated in the future must still publish. Hugo drops future content by
+# default, which would mean the owner hits Publish, sees success, and finds
+# nothing on the site — the exact silent failure this app exists to avoid.
+buildFuture: true
+params:
+  author: "__AUTHOR__"
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+minify:
+  minifyOutput: true

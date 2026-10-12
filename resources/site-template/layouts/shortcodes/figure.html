@@ -1,0 +1,5 @@
+{{- $src := .Get "src" -}}
+<figure class="fig align-{{ .Get "align" | default "center" }}">
+  <a href="{{ $src }}" class="lb"><img src="{{ $src }}" alt="{{ .Get "caption" }}" loading="lazy" /></a>
+  {{- with .Get "caption" }}<figcaption>{{ . | markdownify }}</figcaption>{{ end -}}
+</figure>

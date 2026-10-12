@@ -1,0 +1,10 @@
+{{- $srcs := .Get "srcs" -}}
+<div class="gallery">
+  {{- range (split $srcs ",") -}}
+    {{- $src := trim . " " -}}
+    <a href="{{ $src }}" class="lb" data-gallery="g">
+      <img src="{{ $src }}" alt="" loading="lazy" />
+    </a>
+  {{- end -}}
+</div>
+{{- with .Get "caption" }}<p class="caption">{{ . | markdownify }}</p>{{ end -}}

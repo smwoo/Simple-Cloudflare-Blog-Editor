@@ -1,0 +1,20 @@
+<div id="lb"><button class="prev" aria-label="Previous">‹</button><img alt=""><button class="next" aria-label="Next">›</button></div>
+<script>
+(function(){
+  var links=[].slice.call(document.querySelectorAll('a.lb'));
+  if(!links.length)return;
+  var box=document.getElementById('lb'),img=box.querySelector('img'),i=0;
+  function show(n){i=(n+links.length)%links.length;img.src=links[i].getAttribute('href');box.classList.add('on')}
+  function hide(){box.classList.remove('on');img.src=''}
+  links.forEach(function(a,n){a.addEventListener('click',function(e){e.preventDefault();show(n)})});
+  box.addEventListener('click',function(e){if(e.target===box||e.target===img)hide()});
+  box.querySelector('.prev').addEventListener('click',function(e){e.stopPropagation();show(i-1)});
+  box.querySelector('.next').addEventListener('click',function(e){e.stopPropagation();show(i+1)});
+  document.addEventListener('keydown',function(e){
+    if(!box.classList.contains('on'))return;
+    if(e.key==='Escape')hide();
+    if(e.key==='ArrowLeft')show(i-1);
+    if(e.key==='ArrowRight')show(i+1);
+  });
+})();
+</script>
