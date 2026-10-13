@@ -4,8 +4,7 @@
  *
  * ffmpeg is deliberately NOT taken from npm: `ffmpeg-static` ships 6.1.1 and
  * `@ffmpeg-installer/ffmpeg` ships the 4.x series, while the HDR tone-mapping
- * path needs swscale colour conversion from ffmpeg >= 8. `ffmpeg-static` also
- * ships no ffprobe, which HDR detection requires.
+ * path needs swscale colour conversion from ffmpeg >= 8.
  *
  * Hugo publishes darwin-universal and windows-amd64 extended builds but no
  * windows-arm64, which is why the app targets Windows x64 only — it runs under
@@ -18,7 +17,7 @@ import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
-const HUGO_VERSION = '0.167.0'
+const HUGO_VERSION = '0.152.0'
 const MIN_FFMPEG_MAJOR = 8
 
 const args = process.argv.slice(2)
@@ -38,11 +37,17 @@ const HUGO_URLS = {
   'win32-x64': `https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_windows-amd64.zip`,
 }
 
-// Pinned ffmpeg >= 8 builds. evermeet (macOS) and BtbN (Windows) both publish
-// static builds; BtbN's are versioned by release tag.
+// Static builds from osxexperts.net (macOS) and BtbN (Windows).
+// evermeet.cx is 410 Gone as of Oct 2026.
 const FFMPEG_URLS = {
-  'darwin-arm64': ['https://evermeet.cx/ffmpeg/getrelease/zip', 'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip'],
-  'darwin-x64': ['https://evermeet.cx/ffmpeg/getrelease/zip', 'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip'],
+  'darwin-arm64': [
+    'https://www.osxexperts.net/ffmpeg9arm.zip',
+    'https://www.osxexperts.net/ffprobe9arm.zip',
+  ],
+  'darwin-x64': [
+    'https://www.osxexperts.net/ffmpeg80intel.zip',
+    'https://www.osxexperts.net/ffprobe80intel.zip',
+  ],
   'win32-x64': ['https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'],
 }
 
