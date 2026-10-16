@@ -329,8 +329,10 @@ function registerIpc() {
     const res = await attachDomain(domain, { cf, config, siteDir: store.paths().site }, (p) =>
       send('domain:progress', p),
     )
-    if (res.ok) {
-      config = { ...config, customDomain: domain }
+    // Save as soon as Cloudflare has the hostname, even while it is still being
+    // secured: the attachment is real, and builds must keep using the address.
+    if (res.attached && res.domain) {
+      config = { ...config, customDomain: res.domain }
       await store.writeConfig(config)
     }
     return res
