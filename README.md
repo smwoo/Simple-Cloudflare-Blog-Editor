@@ -1,10 +1,105 @@
 # Blog Editor
 
-A desktop app that sets up and runs a blog for someone non-technical. They
-install it, double-click an icon, and get a working blog on their own Cloudflare
-account — no terminal, no repository, no DNS, no domain purchase. Then they
-write posts and drag photos in; the app converts the media, stores it, and
-publishes.
+A desktop app for writing a blog with photos and videos, without needing to know
+how websites work. You write posts and drag photos in; the app shrinks the photos
+and videos for the web, stores them, and publishes your blog.
+
+Your blog runs on **your own Cloudflare account**. Cloudflare's free plan covers
+a personal blog; you only pay if you go past its free storage, which takes a
+very large photo library. The app is just a tool on your computer: nobody else
+hosts or sees your blog's data.
+
+## Download and install
+
+Go to the **[Releases page](https://github.com/smwoo/Simple-Cloudflare-Blog-Editor/releases)**,
+open the newest release, and download the file for your computer:
+
+| Your computer | File to download |
+| --- | --- |
+| Windows 10 or 11 | `Blog-Editor-Setup-….exe` |
+| Mac with Apple silicon (M1 or newer) | `Blog-Editor-…-mac-arm64.dmg` |
+| Older Intel Mac | `Blog-Editor-…-mac-x64.dmg` |
+
+Not sure which Mac you have? Click the Apple menu → **About This Mac**. If it
+says "Chip: Apple M…", you have Apple silicon.
+
+You do not need to install anything else. Everything the app uses comes inside it.
+
+### Windows
+
+1. Double-click the downloaded `.exe`.
+2. Windows shows **"Windows protected your PC"**. This appears because the app is
+   made by an individual, not a company that pays for a certificate. Click
+   **More info**, then **Run anyway**. You only see this once.
+3. Follow the installer, then open **Blog Editor** from the desktop or Start menu.
+
+Windows updates the app automatically when a new version is released.
+
+### Mac
+
+1. Double-click the downloaded `.dmg`, then drag **Blog Editor** into the
+   **Applications** folder.
+2. Open Blog Editor from Applications. macOS says it **cannot verify the
+   developer**. Click **Done** (not "Move to Trash").
+3. Open **System Settings → Privacy & Security**, scroll down to the message
+   about Blog Editor, and click **Open Anyway**. Confirm with your password.
+
+You only do this once. The Mac version does not update itself yet: to update,
+download the new `.dmg` from the Releases page and drag it into Applications again.
+
+## Setting up your blog (first time only)
+
+The first time you open the app, it asks you to set up your blog. This takes
+about ten minutes. If someone comfortable with technology is helping you, this
+is the part to do together.
+
+You need:
+
+- **A Cloudflare account.** Sign up free at [cloudflare.com](https://dash.cloudflare.com/sign-up).
+- **Cloudflare's photo storage (R2) turned on.** In the Cloudflare dashboard,
+  open **R2 Object Storage** and follow the prompt to enable it. Cloudflare asks
+  for a payment card even on the free plan; a normal blog stays within the free
+  allowance.
+
+Then the app walks you through three steps:
+
+1. **Cloudflare permission.** Click **Open Cloudflare API tokens**, create a token
+   with the permissions the app lists, set it to never expire, and paste it into
+   the app. Press **Check**: every permission should get a green tick.
+2. **Photo storage keys.** Click **Open R2 API tokens**, create a token with
+   **Object Read & Write**, and paste the **Access Key ID** and **Secret Access
+   Key** into the app. Cloudflare shows the secret only once, so copy it straight away.
+3. **Your blog.** Choose a short name (it becomes part of the web address), a
+   title, and your name. Press **Set up the blog**.
+
+When it finishes, your blog is live at an address like
+`https://your-name.your-account.workers.dev`, which you can share straight away.
+
+## Writing posts
+
+- **New post** starts a post. It saves automatically as you type.
+- **Photos and videos:** drag them onto the post or onto the **Photos** panel on
+  the right. Several photos together become a gallery. The app prepares them for
+  the web automatically; your originals are kept untouched on your computer.
+- **Preview** shows the post as it will look online.
+- **Publish** puts the post on your blog. **Update** republishes changes.
+
+## Good to know
+
+- **Your own web address.** If you own a domain at Cloudflare (or buy one there),
+  open **Settings** (the gear icon) → **Web addresses** and add it, for example
+  `alice.com` or `blog.alice.com`.
+- **Where your work is kept.** Posts and original photos live on this computer,
+  and the app also keeps a copy of your posts in your Cloudflare storage.
+  Each computer is set up as its own blog.
+- **If something goes wrong,** open **Settings** → **Copy report**, and send the
+  text to whoever helped you set up. It contains no passwords or keys.
+- **Uninstalling** the app does not take your blog offline. It keeps running on
+  Cloudflare until you delete it there.
+
+---
+
+# For developers
 
 Each user owns and pays for their own infrastructure. The app is a tool, not a
 hosted platform: it runs no server and holds nothing on anyone's behalf.
@@ -38,7 +133,7 @@ domain, a second hostname and a DNS record from setup entirely.
 npm install
 node scripts/fetch-binaries.mjs   # hugo + ffmpeg >= 8 into resources/bin/
 npm run dev                       # Electron with HMR
-npm test                          # 46 tests
+npm test                          # 77 tests
 npm run typecheck
 npm run smoke                      # build, render once, screenshot, assert no console errors
 ```
@@ -55,6 +150,18 @@ npm run pack:win     # NSIS installer, x64 only
 
 CI builds each platform on its own runner — Windows installers built from macOS
 hit wine friction, and macOS notarization only runs on macOS.
+
+### Releasing
+
+Bump `version` in `package.json`, commit, then push a matching tag:
+
+```sh
+git tag -a v0.1.2 -m v0.1.2 && git push origin v0.1.2
+```
+
+CI builds the Mac dmgs and the Windows installer and publishes them as one
+pre-release with the install notes from `.github/release-notes.md`. Installed
+Windows copies pick it up through auto-update; Mac users reinstall.
 
 ## Layout
 
