@@ -310,7 +310,7 @@ function registerIpc() {
   // ---- preview
   ipcMain.handle('preview:start', async () => {
     try {
-      return { ok: true, origin: await preview.start(store.paths().site) }
+      return { ok: true, origin: await preview.start(store.paths().site, store.paths().output) }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }

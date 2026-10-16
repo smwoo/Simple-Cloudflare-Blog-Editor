@@ -6,11 +6,20 @@
  * editor's document model to the bytes a reader receives.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { scaffold, writePost, readPost, listPosts, build, checkHugo, setBaseUrl } from '../hugo.js'
+import {
+  scaffold,
+  writePost,
+  readPost,
+  listPosts,
+  build,
+  checkHugo,
+  setBaseUrl,
+  PreviewServer,
+} from '../hugo.js'
 import type { Post, BlogConfig, PMNode } from '../../../shared/types.js'
 
 const config: BlogConfig = {
@@ -188,4 +197,40 @@ describe('hugo build', () => {
     const withDrafts = await build(dir, { drafts: true })
     expect(existsSync(path.join(withDrafts.publicDir, 'posts', 'draft-post', 'index.html'))).toBe(true)
   })
+})
+
+describe('preview server', () => {
+  it('serves local media at /media so preview images are not broken', async () => {
+    if (!hugoOk) return
+    await writePost(dir, post)
+    const media = await mkdtemp(path.join(tmpdir(), 'blog-media-'))
+    const bytes = Buffer.from('fake-avif-bytes')
+    await mkdir(path.join(media, 'nov-2026', 'surf'), { recursive: true })
+    await writeFile(path.join(media, 'nov-2026', 'surf', 'surf-1.avif'), bytes)
+
+    const preview = new PreviewServer()
+    try {
+      const origin = await preview.start(dir, media, 13917)
+      const page = await fetch(`${origin}/posts/nov-2026/`)
+      expect(page.status).toBe(200)
+      expect(await page.text()).toMatch(/src="?\/media\/nov-2026\/surf\/surf-1\.avif/)
+
+      const img = await fetch(`${origin}/media/nov-2026/surf/surf-1.avif`)
+      expect(img.status).toBe(200)
+      expect(Buffer.from(await img.arrayBuffer()).equals(bytes)).toBe(true)
+    } finally {
+      preview.stop()
+      await rm(media, { recursive: true, force: true })
+    }
+
+    // Preview must not write into public/: everything there is deployed.
+    expect(existsSync(path.join(dir, 'public', 'media'))).toBe(false)
+
+    // A publish build ignores the preview overlay and drops stray files.
+    await mkdir(path.join(dir, 'public', 'media'), { recursive: true })
+    await writeFile(path.join(dir, 'public', 'media', 'stray.mp4'), 'x')
+    const res = await build(dir)
+    expect(res.ok, res.log).toBe(true)
+    expect(existsSync(path.join(res.publicDir, 'media'))).toBe(false)
+  }, 30_000)
 })

@@ -109,6 +109,9 @@ export interface BuildResult {
 export async function build(dir: string, opts: { drafts?: boolean } = {}): Promise<BuildResult> {
   const publicDir = path.join(dir, 'public')
   const started = Date.now()
+  // --cleanDestinationDir alone leaves stray files behind, and everything in
+  // public/ is deployed, so start from an empty directory every time.
+  await rm(publicDir, { recursive: true, force: true })
   const args = ['--minify', '--cleanDestinationDir', '-s', dir, '-d', publicDir]
   if (opts.drafts) args.push('-D')
 
@@ -131,18 +134,43 @@ export async function checkHugo(): Promise<{ ok: boolean; version: string }> {
  * `hugo server` for the preview pane, with drafts on so an unpublished post is
  * visible. Returns the origin to point an iframe at.
  */
+const PREVIEW_CONFIG = '.preview-config.json'
+
 export class PreviewServer {
   private child?: ReturnType<typeof spawn>
   private origin?: string
 
-  async start(dir: string, port = 1313): Promise<string> {
+  /**
+   * `mediaDir` is the app's local converted-media folder. On the live site the
+   * Worker serves /media/* from R2; locally nothing would, so preview mounts the
+   * folder at /media through a preview-only config overlay. Published builds
+   * never see the overlay.
+   */
+  async start(dir: string, mediaDir: string, port = 1313): Promise<string> {
     if (this.origin) return this.origin
+    await mkdir(mediaDir, { recursive: true })
+    await writeFile(
+      path.join(dir, PREVIEW_CONFIG),
+      JSON.stringify({
+        module: {
+          mounts: [
+            // Declaring any static mount drops Hugo's default one; restore it.
+            { source: 'static', target: 'static' },
+            { source: mediaDir, target: 'static/media' },
+          ],
+        },
+      }),
+    )
     this.child = spawn(
       hugoBin(),
       [
         'server',
         '-D',
         '-s', dir,
+        '--config', `hugo.yaml,${PREVIEW_CONFIG}`,
+        // Without this hugo server writes the site — static media included —
+        // into public/, which is exactly the directory that gets deployed.
+        '--renderToMemory',
         '-p', String(port),
         '--bind', '127.0.0.1',
         '--baseURL', `http://127.0.0.1:${port}/`,
@@ -153,20 +181,31 @@ export class PreviewServer {
       { windowsHide: true },
     )
 
+    const child = this.child
     return new Promise((resolve, reject) => {
+      let output = ''
       const timer = setTimeout(() => reject(new Error('preview server did not start')), 20_000)
       const onData = (d: Buffer) => {
-        if (/Web Server is available|Press Ctrl\+C/.test(d.toString())) {
+        output += d.toString()
+        if (/Web Server is available|Press Ctrl\+C/.test(output)) {
           clearTimeout(timer)
           this.origin = `http://127.0.0.1:${port}`
           resolve(this.origin)
         }
       }
-      this.child!.stdout?.on('data', onData)
-      this.child!.stderr?.on('data', onData)
-      this.child!.on('error', (e) => {
+      child.stdout?.on('data', onData)
+      child.stderr?.on('data', onData)
+      child.on('error', (e) => {
         clearTimeout(timer)
         reject(e)
+      })
+      // Surface Hugo's own error (a bad post, a port in use) instead of a timeout.
+      child.on('exit', (code) => {
+        if (this.child === child) this.child = undefined
+        if (this.origin) return
+        clearTimeout(timer)
+        const error = /Error: .*/.exec(output)?.[0]
+        reject(new Error(error ?? `preview server exited with code ${code}`))
       })
     })
   }
