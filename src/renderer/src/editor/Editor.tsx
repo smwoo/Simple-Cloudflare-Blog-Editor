@@ -4,6 +4,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { Gallery, Video, Figure } from './nodes.js'
 import { insertAssets } from './insert.js'
 import { assetStore } from './assetStore.js'
+import { applyLink, removeLink, startLink, type LinkDraft } from './link.js'
 import type { Post, PMNode } from '../../../shared/types.js'
 
 export interface EditorHandle {
@@ -146,15 +147,24 @@ function Toolbar({ editor }: { editor: TipTapEditor }) {
     </button>
   )
 
-  const setLink = () => {
-    const prev = editor.getAttributes('link').href ?? ''
-    const href = window.prompt('Link address', prev)
-    if (href === null) return
-    if (href === '') editor.chain().focus().unsetLink().run()
-    else editor.chain().focus().setLink({ href }).run()
+  // Electron does not implement window.prompt, so the address is edited inline.
+  const [link, setLinkState] = useState<LinkDraft | null>(null)
+  const openLink = () => setLinkState(startLink(editor))
+  const commitLink = () => {
+    if (link) applyLink(editor, link)
+    setLinkState(null)
+  }
+  const dropLink = () => {
+    if (link) removeLink(editor, link)
+    setLinkState(null)
+  }
+  const cancelLink = () => {
+    setLinkState(null)
+    editor.commands.focus()
   }
 
   return (
+    <>
     <div className="toolbar">
       {btn('H2', editor.isActive('heading', { level: 2 }), () => editor.chain().focus().toggleHeading({ level: 2 }).run(), 'Heading')}
       {btn('H3', editor.isActive('heading', { level: 3 }), () => editor.chain().focus().toggleHeading({ level: 3 }).run(), 'Subheading')}
@@ -162,7 +172,7 @@ function Toolbar({ editor }: { editor: TipTapEditor }) {
       {btn('B', editor.isActive('bold'), () => editor.chain().focus().toggleBold().run(), 'Bold')}
       {btn('I', editor.isActive('italic'), () => editor.chain().focus().toggleItalic().run(), 'Italic')}
       {btn('S', editor.isActive('strike'), () => editor.chain().focus().toggleStrike().run(), 'Strikethrough')}
-      {btn('Link', editor.isActive('link'), setLink, 'Link')}
+      {btn('Link', editor.isActive('link') || !!link, link ? cancelLink : openLink, 'Link')}
       <span className="sep" />
       {btn('• List', editor.isActive('bulletList'), () => editor.chain().focus().toggleBulletList().run(), 'Bullet list')}
       {btn('1. List', editor.isActive('orderedList'), () => editor.chain().focus().toggleOrderedList().run(), 'Numbered list')}
@@ -170,5 +180,35 @@ function Toolbar({ editor }: { editor: TipTapEditor }) {
       <span className="sep" />
       {btn('—', false, () => editor.chain().focus().setHorizontalRule().run(), 'Divider')}
     </div>
+    {link && (
+      <div className="link-bar">
+        <input
+          autoFocus
+          value={link.href}
+          placeholder="Paste or type a web address"
+          spellCheck={false}
+          onChange={(e) => setLinkState({ ...link, href: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commitLink()
+            }
+            if (e.key === 'Escape') cancelLink()
+          }}
+        />
+        <button className="primary" onClick={commitLink}>
+          {link.href.trim() ? 'Apply' : 'OK'}
+        </button>
+        {editor.isActive('link') && (
+          <button className="danger" onClick={dropLink}>
+            Remove
+          </button>
+        )}
+        <button className="ghost" onClick={cancelLink}>
+          Cancel
+        </button>
+      </div>
+    )}
+    </>
   )
 }
