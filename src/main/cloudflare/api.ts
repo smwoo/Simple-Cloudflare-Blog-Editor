@@ -87,52 +87,50 @@ export class CloudflareClient {
       }
     }
 
+    // Validate via /accounts, not /user/tokens/verify: account-owned tokens
+    // (cfat_…) get a 401 from the user endpoint even when fully valid.
+    let accounts: { id: string; name: string }[]
     try {
-      await this.request('/user/tokens/verify')
+      accounts = (await this.request<{ id: string; name: string }[]>('/accounts')) ?? []
     } catch (e) {
       const err = e as CloudflareError
       return {
         ok: false,
         granted: [],
-        missing: REQUIRED_PERMISSIONS.map((p) => p.label),
+        missing: [],
+        optionalMissing: [],
         error:
-          err.status === 401 || err.status === 403
+          err.status === 400 || err.status === 401 || err.status === 403
             ? 'That token was not accepted. Check it was copied whole, and that it has not expired.'
             : err.message,
       }
     }
-
-    const accounts = await this.request<{ id: string; name: string }[]>('/accounts')
-    if (!accounts?.length) {
-      return { ok: false, granted: [], missing: [], error: 'The token has no account access.' }
+    if (!accounts.length) {
+      return {
+        ok: false,
+        granted: [],
+        missing: ['Account Settings — Read'],
+        optionalMissing: [],
+        error: 'The token cannot see any account.',
+      }
     }
     const account = accounts[0]
 
-    const granted: string[] = ['Account Settings — Read']
+    const granted: string[] = []
     const missing: string[] = []
+    const optionalMissing: string[] = []
 
-    for (const perm of REQUIRED_PERMISSIONS) {
-      if (perm.label === 'Account Settings — Read') continue
-      // Skip Zone permission - it's optional until custom domain is added
-      if (perm.label.includes('Zone')) {
-        try {
-          await perm.probe(this, account.id)
-          granted.push(perm.label)
-        } catch (e) {
-          // Zone permissions are optional - don't fail validation
-          granted.push(perm.label + ' (optional, skipped)')
-        }
-        continue
-      }
+    for (const perm of [...REQUIRED_PERMISSIONS, ...OPTIONAL_PERMISSIONS]) {
       try {
         await perm.probe(this, account.id)
         granted.push(perm.label)
       } catch (e) {
         const err = e as CloudflareError
-        // 403/9109 means the permission is absent. Anything else is a real
+        // 401/403 means the permission is absent. Anything else is a real
         // outage and should not be reported as a missing tick-box.
-        if (err.status === 403 || err.status === 401) missing.push(perm.label)
-        else granted.push(perm.label)
+        if (err.status !== 401 && err.status !== 403) granted.push(perm.label)
+        else if (OPTIONAL_PERMISSIONS.includes(perm)) optionalMissing.push(perm.label)
+        else missing.push(perm.label)
       }
     }
 
@@ -142,6 +140,7 @@ export class CloudflareClient {
       accountName: account.name,
       granted,
       missing,
+      optionalMissing,
     }
   }
 
@@ -236,11 +235,6 @@ interface Permission {
   probe: (c: CloudflareClient, accountId: string) => Promise<unknown>
 }
 
-/**
- * The narrow set the app needs. Zone + Workers Routes are only used by the
- * custom-domain flow, but are requested up front: they cost nothing now and
- * mean a later domain needs no second visit from the helper.
- */
 export const REQUIRED_PERMISSIONS: Permission[] = [
   {
     label: 'Account Settings — Read',
@@ -254,8 +248,12 @@ export const REQUIRED_PERMISSIONS: Permission[] = [
     label: 'Workers Scripts — Edit',
     probe: (c, id) => c.request(`/accounts/${id}/workers/scripts`),
   },
+]
+
+/** Only the custom-domain flow needs these; setup succeeds without them. */
+export const OPTIONAL_PERMISSIONS: Permission[] = [
   {
-    label: 'Zone — Read (needed later, for a custom domain)',
+    label: 'Zone — Read (for a custom domain)',
     probe: (c) => c.request('/zones?per_page=1'),
   },
 ]

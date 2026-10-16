@@ -138,6 +138,8 @@ export interface TokenCheck {
   granted: string[]
   /** Permissions required but absent — named precisely so a helper fixes it in one pass. */
   missing: string[]
+  /** Absent but only needed later (custom domain). Never blocks setup. */
+  optionalMissing?: string[]
   /** True when the credential looks like a Global API Key rather than a scoped token. */
   looksLikeGlobalKey?: boolean
   error?: string
