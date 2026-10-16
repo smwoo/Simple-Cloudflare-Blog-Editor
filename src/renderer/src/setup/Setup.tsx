@@ -25,7 +25,7 @@ const PERMISSIONS = [
   ['Account', 'Account Settings', 'Read'],
   ['Account', 'Workers R2 Storage', 'Edit'],
   ['Account', 'Workers Scripts', 'Edit'],
-  ['Zone', 'Zone', 'Read (optional - only for custom domains)'],
+  ['Zone (optional)', 'Zone', 'Read'],
 ]
 
 export function Setup({ onDone }: { onDone: () => void }) {
@@ -165,6 +165,12 @@ export function Setup({ onDone }: { onDone: () => void }) {
               <div className="perm err" key={m}>
                 <span>✕</span>
                 <span>{m}</span>
+              </div>
+            ))}
+            {check.optionalMissing?.map((m) => (
+              <div className="perm" key={m} style={{ color: 'var(--muted)' }}>
+                <span>–</span>
+                <span>{m} — not granted, fine for now</span>
               </div>
             ))}
             {check.missing.length > 0 && (
