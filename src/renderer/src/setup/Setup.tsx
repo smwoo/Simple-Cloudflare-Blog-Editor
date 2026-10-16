@@ -25,8 +25,7 @@ const PERMISSIONS = [
   ['Account', 'Account Settings', 'Read'],
   ['Account', 'Workers R2 Storage', 'Edit'],
   ['Account', 'Workers Scripts', 'Edit'],
-  ['Zone', 'Zone', 'Read'],
-  ['Zone', 'Workers Routes', 'Edit'],
+  ['Zone', 'Zone', 'Read (optional - only for custom domains)'],
 ]
 
 export function Setup({ onDone }: { onDone: () => void }) {

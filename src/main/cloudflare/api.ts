@@ -113,6 +113,17 @@ export class CloudflareClient {
 
     for (const perm of REQUIRED_PERMISSIONS) {
       if (perm.label === 'Account Settings — Read') continue
+      // Skip Zone permission - it's optional until custom domain is added
+      if (perm.label.includes('Zone')) {
+        try {
+          await perm.probe(this, account.id)
+          granted.push(perm.label)
+        } catch (e) {
+          // Zone permissions are optional - don't fail validation
+          granted.push(perm.label + ' (optional, skipped)')
+        }
+        continue
+      }
       try {
         await perm.probe(this, account.id)
         granted.push(perm.label)
