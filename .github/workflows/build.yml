@@ -15,6 +15,8 @@ jobs:
         with: { node-version: 24, cache: npm }
       - run: npm ci
       - run: npm run typecheck
+      # The ffmpeg/Hugo tests need the real binaries, not whatever is on PATH.
+      - run: node scripts/fetch-binaries.mjs
       # Media tests that need the reference library skip automatically; the
       # serializer and site tests always run.
       - run: npm test
@@ -29,11 +31,11 @@ jobs:
         include:
           - os: macos-latest
             platform: darwin
-            arch: arm64
+            arches: arm64 x64
             cmd: pack:mac
           - os: windows-latest
             platform: win32
-            arch: x64
+            arches: x64
             cmd: pack:win
     runs-on: ${{ matrix.os }}
     steps:
@@ -42,16 +44,18 @@ jobs:
         with: { node-version: 24, cache: npm }
       - run: npm ci
       - name: Fetch bundled binaries
-        run: node scripts/fetch-binaries.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+        shell: bash
+        run: for a in ${{ matrix.arches }}; do node scripts/fetch-binaries.mjs --platform ${{ matrix.platform }} --arch $a; done
       - name: Smoke test the renderer
         if: matrix.os == 'macos-latest'
-        run: npm run smoke
+        run: |
+          # npm may skip Electron's postinstall, which downloads its binary.
+          node node_modules/electron/install.js
+          npm run smoke
       - run: npm run ${{ matrix.cmd }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}-${{ matrix.arch }}
+          name: blog-editor-${{ matrix.platform }}
           path: |
             release/*.dmg
             release/*.exe

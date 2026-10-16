@@ -38,7 +38,8 @@ const HUGO_URLS = {
 }
 
 // Static builds from osxexperts.net (macOS) and BtbN (Windows).
-// evermeet.cx is 410 Gone as of Oct 2026.
+// evermeet.cx is 410 Gone as of Oct 2026. BtbN's *release* build, not master:
+// master reports "ffmpeg version N-…", which carries no major version to check.
 const FFMPEG_URLS = {
   'darwin-arm64': [
     'https://www.osxexperts.net/ffmpeg9arm.zip',
@@ -48,7 +49,7 @@ const FFMPEG_URLS = {
     'https://www.osxexperts.net/ffmpeg80intel.zip',
     'https://www.osxexperts.net/ffprobe80intel.zip',
   ],
-  'win32-x64': ['https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'],
+  'win32-x64': ['https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip'],
 }
 
 async function download(url, dest) {
@@ -58,9 +59,16 @@ async function download(url, dest) {
   await writeFile(dest, Buffer.from(await res.arrayBuffer()))
 }
 
+// bsdtar reads .zip and .tar.gz alike, and ships with both macOS and Windows.
+// On Windows name System32's copy explicitly: Git Bash puts GNU tar first on
+// PATH, which cannot read zips and treats "C:" as a remote host.
+const TAR =
+  process.platform === 'win32'
+    ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+    : 'tar'
+
 function extract(archive, into) {
-  if (archive.endsWith('.zip')) execFileSync('unzip', ['-o', '-q', archive, '-d', into])
-  else execFileSync('tar', ['-xzf', archive, '-C', into])
+  execFileSync(TAR, ['-xf', archive, '-C', into])
 }
 
 /** Find a binary anywhere under `dir` and move it to `outDir`. */

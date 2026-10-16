@@ -29,10 +29,13 @@ export async function initUpdater(notify: (s: UpdateState) => void): Promise<voi
 
   let autoUpdater: any
   try {
-    ;({ autoUpdater } = await import('electron-updater'))
+    // electron-updater is CommonJS; from ESM its exports may only be on default.
+    const mod: any = await import('electron-updater')
+    autoUpdater = mod.autoUpdater ?? mod.default?.autoUpdater
   } catch {
     return
   }
+  if (!autoUpdater) return
 
   autoUpdater.autoDownload = true
   // Applying on quit keeps the writer out of a restart they did not ask for.

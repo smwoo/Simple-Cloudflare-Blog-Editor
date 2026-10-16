@@ -16,8 +16,9 @@ asarUnpack:
 extraResources:
   # The bundled binaries, fetched by scripts/fetch-binaries.mjs. Only the
   # current platform's directory is included.
+  # Kept under bin/<platform>-<arch>/, which is where ffmpeg.ts and hugo.ts look.
   - from: resources/bin/${platform}-${arch}
-    to: bin
+    to: bin/${platform}-${arch}
   - from: resources/site-template
     to: site-template
 
