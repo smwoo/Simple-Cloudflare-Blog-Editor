@@ -6,6 +6,7 @@
  * second. This queue only moves an asset from `converting` to `live`.
  */
 import { cpus } from 'node:os'
+import { existsSync } from 'node:fs'
 import type { Asset, JobProgress } from '../../shared/types.js'
 import type { Library } from '../db/library.js'
 import type { R2 } from '../cloudflare/r2.js'
@@ -127,7 +128,10 @@ export class MediaQueue {
     let uploaded = 0
     let failed = 0
     for (const asset of this.library.all()) {
-      if (asset.state !== 'uploading' || !asset.outputPath) continue
+      // Failed uploads with a finished conversion are retried too; failed
+      // conversions have no output and need retry() instead.
+      const retryable = asset.state === 'uploading' || asset.state === 'failed'
+      if (!retryable || !asset.outputPath || !existsSync(asset.outputPath)) continue
       try {
         await r2.putFile(asset.key, asset.outputPath)
         await this.library.setState(asset.key, 'live')
@@ -148,6 +152,25 @@ export class MediaQueue {
   async retry(key: string): Promise<void> {
     const asset = this.library.get(key)
     if (!asset) return
+    // Conversion already done (the upload failed): re-send, don't re-encode.
+    if (asset.outputPath && existsSync(asset.outputPath)) {
+      const r2 = this.r2()
+      if (!r2) return
+      try {
+        await this.library.setState(key, 'uploading')
+        this.emit({ key, state: 'uploading', fraction: 0 })
+        await r2.putFile(key, asset.outputPath, {
+          onProgress: (fraction) => this.emit({ key, state: 'uploading', fraction }),
+        })
+        await this.library.setState(key, 'live')
+        this.emit({ key, state: 'live', fraction: 1 })
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        await this.library.setState(key, 'failed', message)
+        this.emit({ key, state: 'failed', error: message })
+      }
+      return
+    }
     this.add([
       { srcFile: asset.originalPath, key, postSlug: asset.postSlug, group: asset.group },
     ])

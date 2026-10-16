@@ -271,7 +271,8 @@ export async function ingest(
   await mkdir(path.dirname(outputPath), { recursive: true })
   await mkdir(paths.cacheDir, { recursive: true })
 
-  await copyFile(srcFile, originalPath)
+  // A retry re-ingests from the archived original itself.
+  if (path.resolve(srcFile) !== path.resolve(originalPath)) await copyFile(srcFile, originalPath)
   const { size: bytesOriginal } = await stat(originalPath)
 
   const asset: Asset = {

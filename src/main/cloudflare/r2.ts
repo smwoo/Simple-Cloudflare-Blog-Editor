@@ -39,6 +39,9 @@ export function contentTypeFor(key: string): string {
 }
 
 export class R2 {
+  /** Set once at boot in Electron; see fetchHandler.ts for why. */
+  static requestHandler: unknown
+
   private client: S3Client
 
   constructor(
@@ -47,6 +50,7 @@ export class R2 {
     private bucket: string,
   ) {
     this.client = new S3Client({
+      requestHandler: R2.requestHandler as any,
       region: 'auto',
       endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
       credentials: {
@@ -93,25 +97,34 @@ export class R2 {
       )
     }
 
-    const upload = new Upload({
-      client: this.client,
-      params: {
-        Bucket: this.bucket,
-        Key: key,
-        Body: createReadStream(file),
-        ContentType: contentTypeFor(key),
-        CacheControl: opts.cacheControl ?? MEDIA_CACHE_CONTROL,
-      },
-      queueSize: 4,
-      partSize: 8 * 1024 * 1024,
-    })
-
-    if (opts.onProgress) {
-      upload.on('httpUploadProgress', (p) => {
-        if (p.loaded && size) opts.onProgress!(Math.min(1, p.loaded / size))
+    // A dropped connection mid-upload should not cost the owner a manual retry.
+    for (let attempt = 1; ; attempt++) {
+      const upload = new Upload({
+        client: this.client,
+        params: {
+          Bucket: this.bucket,
+          Key: key,
+          Body: createReadStream(file),
+          ContentType: contentTypeFor(key),
+          CacheControl: opts.cacheControl ?? MEDIA_CACHE_CONTROL,
+        },
+        queueSize: 4,
+        partSize: 8 * 1024 * 1024,
       })
+      if (opts.onProgress) {
+        upload.on('httpUploadProgress', (p) => {
+          if (p.loaded && size) opts.onProgress!(Math.min(1, p.loaded / size))
+        })
+      }
+      try {
+        await upload.done()
+        break
+      } catch (e: any) {
+        const status = e?.$metadata?.httpStatusCode
+        if (attempt >= 3 || (status >= 400 && status < 500)) throw e
+        await new Promise((r) => setTimeout(r, 1000 * attempt))
+      }
     }
-    await upload.done()
     return { skipped: false }
   }
 

@@ -163,3 +163,5 @@ iframe.preview{border:0;width:100%;height:100%;background:#fff}
           background:var(--panel);flex:none}
 .link-bar input{flex:1;padding:5px 8px;font-size:13px}
 .link-bar button{padding:4px 11px;font-size:12.5px}
+.tile button.retry{border:0;border-radius:0;width:100%;cursor:pointer;background:rgba(185,28,28,.85);padding:3px 2px}
+.tile button.retry:hover{background:rgba(185,28,28,1)}

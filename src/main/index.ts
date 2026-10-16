@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS, allocateKey, kindOf } from './media/pipeline.js'
 import { assertFfmpegVersion } from './media/ffmpeg.js'
 import { CloudflareClient } from './cloudflare/api.js'
 import { R2 } from './cloudflare/r2.js'
+import { createFetchHandler } from './cloudflare/fetchHandler.js'
 import { provision, type SetupInput } from './setup.js'
 import { publish, saveDraft, backupSource, restoreSource } from './publish.js'
 import { attachDomain, registrarUrl } from './domain.js'
@@ -385,6 +386,7 @@ function registerIpc() {
 // ---------------------------------------------------------------- boot
 
 app.whenReady().then(async () => {
+  R2.requestHandler = createFetchHandler((url, init) => net.fetch(url, init))
   store = await Store.open(dataDir(), safeStorage)
   library = await Library.open(store.paths().library)
   const paths = store.paths()

@@ -201,10 +201,19 @@ function Tile({
         </div>
       )}
       {placed && <span className="used" title="Used in this post" />}
-      {asset.state !== 'live' && (
-        <div className="state">
-          {asset.state === 'failed' ? 'failed' : asset.state === 'uploading' ? 'uploading' : 'preparing'}
-        </div>
+      {asset.state === 'failed' && (
+        <button
+          className="state retry"
+          onClick={(e) => {
+            e.stopPropagation()
+            window.api.retryMedia(asset.key)
+          }}
+        >
+          failed · retry
+        </button>
+      )}
+      {asset.state !== 'live' && asset.state !== 'failed' && (
+        <div className="state">{asset.state === 'uploading' ? 'uploading' : 'preparing'}</div>
       )}
       {asset.kind === 'video' && asset.state === 'live' && <div className="state">video</div>}
     </div>
