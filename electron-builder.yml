@@ -1,4 +1,5 @@
 appId: com.blogeditor.app
+afterPack: scripts/adhoc-sign.cjs
 productName: Blog Editor
 directories:
   output: release
@@ -27,11 +28,17 @@ mac:
   target:
     - target: dmg
       arch: [arm64, x64]
-  # Gatekeeper gives no "run anyway" button at all for an un-notarized app, so
-  # for anyone other than the author this needs the $99/yr Apple Developer
-  # Program and notarization. Unlike Windows there is no reputation period:
-  # once notarized it simply works. See CODE-SIGNING.md.
-  hardenedRuntime: true
+  # Ad-hoc signed, not notarized. Without any signature electron-builder
+  # leaves Electron's original one broken by its edits, and a downloaded copy on
+  # Apple Silicon is reported as "damaged" with no way past it but Terminal.
+  # Ad-hoc signing seals the bundle (bundled ffmpeg/Hugo included), so macOS
+  # instead shows the unverified-developer warning, which System Settings →
+  # Privacy & Security → "Open Anyway" clears once. Removing that warning needs
+  # the $99/yr Apple Developer Program and notarization; see CODE-SIGNING.md.
+  # null = electron-builder does not sign; scripts/adhoc-sign.cjs does (afterPack).
+  identity: null
+  # Hardened runtime only matters for notarization.
+  hardenedRuntime: false
   gatekeeperAssess: false
   notarize: false
 
@@ -46,18 +53,21 @@ win:
   # of installs can never reach. Do the first install in person and rely on
   # electron-updater afterwards. See CODE-SIGNING.md.
 
+dmg:
+  artifactName: Blog-Editor-${version}-mac-${arch}.${ext}
+
 nsis:
+  artifactName: Blog-Editor-Setup-${version}.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
 
 publish:
-  # electron-updater's generic provider: a static HTTPS directory of installers
-  # plus latest.yml. Host this in YOUR account, never in a user's own bucket.
-  #
-  # If served from R2: latest.yml MUST be no-cache. Under the media default of
-  # max-age=31536000, immutable it would pin everyone to the first version they
-  # ever saw, permanently and silently.
-  provider: generic
-  url: https://updates.example.com/blog-editor/
+  # Updates come from this repo's GitHub Releases (latest.yml is attached by the
+  # release job in .github/workflows/build.yml). Windows only for now: macOS will
+  # only install an update whose signature matches the running app, and an
+  # ad-hoc signature differs on every build.
+  provider: github
+  owner: smwoo
+  repo: Simple-Cloudflare-Blog-Editor

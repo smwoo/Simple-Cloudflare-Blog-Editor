@@ -26,6 +26,9 @@ export const updateState = () => state
 export async function initUpdater(notify: (s: UpdateState) => void): Promise<void> {
   // Never in development, and never from a non-packaged build.
   if (!app.isPackaged) return
+  // macOS requires the update to carry the same signature identity as the
+  // running app; ad-hoc builds never match, so Mac users reinstall from Releases.
+  if (process.platform === 'darwin') return
 
   let autoUpdater: any
   try {
@@ -40,6 +43,8 @@ export async function initUpdater(notify: (s: UpdateState) => void): Promise<voi
   autoUpdater.autoDownload = true
   // Applying on quit keeps the writer out of a restart they did not ask for.
   autoUpdater.autoInstallOnAppQuit = true
+  // Releases are marked pre-release while the app is in preview.
+  autoUpdater.allowPrerelease = true
 
   const set = (patch: Partial<UpdateState>) => {
     state = { ...state, ...patch }

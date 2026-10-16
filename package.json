@@ -1,6 +1,6 @@
 {
   "name": "blog-editor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A desktop app that sets up and runs a blog for a non-technical person",
   "main": "out/main/index.js",
   "type": "module",
