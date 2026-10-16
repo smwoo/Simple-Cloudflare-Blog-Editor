@@ -367,12 +367,20 @@ did not judge quality visually, and that call is yours.
 
 ### Video settings
 
-Taken unchanged from the reference pipeline, where they were hard-won: HEVC
-`libx265` CRF 26 preset slow, `-tag:v hvc1` (Safari will not recognise the track
-otherwise), `+faststart`, `yuv420p` 8-bit, 30 fps, fit inside 1080p without
-upscaling, metadata stripped, AAC 128k stereo — plus an HDR branch converting
-iPhone HLG/PQ footage to SDR BT.709 while scaling, keyed off `ffprobe`'s
-`color_transfer`.
+From the reference pipeline, where they were hard-won: HEVC `libx265` preset
+slow, `-tag:v hvc1` (Safari will not recognise the track otherwise),
+`+faststart`, `yuv420p` 8-bit, 30 fps, fit inside 1080p without upscaling,
+metadata stripped, AAC 128k stereo — plus an HDR branch converting iPhone HLG/PQ
+footage to SDR BT.709 while scaling, keyed off `ffprobe`'s `color_transfer`.
+
+CRF is 28, not the reference's 26: R2 storage is the cost that matters, and
+measured from a phone original CRF 28 is ~25% smaller at VMAF ~93 (26: ~96).
+
+A source already in that shape (HEVC, 8-bit SDR, ≤1080p, ≤30 fps, AAC) is
+usually a previous conversion. It still gets a trial encode, but unless that is
+at least 15% smaller the source is remuxed instead — same tag, faststart and
+stripped metadata, no quality loss. Re-encoding a converted file measured −4.7
+VMAF per pass for only 6–8% less size.
 
 ### Layout
 
@@ -819,7 +827,7 @@ somewhere to attach later if it is ever needed.
 | image quality | recalibrate for sharp in Phase 2 (ImageMagick q80 is the reference) |
 | ICC profile | **keep**; strip EXIF |
 | EXIF orientation | bake into pixels (`sharp.rotate()`) |
-| video codec | HEVC `libx265`, CRF 26, preset slow |
+| video codec | HEVC `libx265`, CRF 28, preset slow; remux web-ready sources unless re-encoding saves ≥15% |
 | video tag | `hvc1` (required by Safari) |
 | video size and fps | fit 1080p, no upscale, 30 fps, `yuv420p` |
 | video audio | AAC 128k stereo |

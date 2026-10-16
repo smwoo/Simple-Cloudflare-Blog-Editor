@@ -79,12 +79,18 @@ export interface Probe {
   /** HLG or PQ source — needs tone mapping to SDR. */
   isHdr: boolean
   hasAudio: boolean
+  videoCodec: string
+  /** e.g. yuv420p (8-bit) or yuv420p10le (10-bit). */
+  pixFmt: string
+  /** Average frame rate; iPhone video is variable-rate, so not r_frame_rate. */
+  fps: number
+  audioCodec?: string
 }
 
 export async function probe(file: string): Promise<Probe> {
   const { stdout } = await run(toolPath('ffprobe'), [
     '-v', 'error',
-    '-show_entries', 'stream=width,height,codec_type,color_transfer',
+    '-show_entries', 'stream=width,height,codec_type,codec_name,pix_fmt,avg_frame_rate,color_transfer',
     '-show_entries', 'format=duration',
     '-of', 'json',
     file,
@@ -92,12 +98,18 @@ export async function probe(file: string): Promise<Probe> {
   const json = JSON.parse(stdout || '{}')
   const streams: any[] = json.streams ?? []
   const v = streams.find((s) => s.codec_type === 'video') ?? {}
+  const a = streams.find((s) => s.codec_type === 'audio')
   const trc = v.color_transfer
+  const [num, den] = String(v.avg_frame_rate ?? '0/1').split('/').map(Number)
   return {
     width: Number(v.width ?? 0),
     height: Number(v.height ?? 0),
     durationSec: Number(json.format?.duration ?? 0),
     isHdr: trc === 'smpte2084' || trc === 'arib-std-b67',
-    hasAudio: streams.some((s) => s.codec_type === 'audio'),
+    hasAudio: !!a,
+    videoCodec: String(v.codec_name ?? ''),
+    pixFmt: String(v.pix_fmt ?? ''),
+    fps: den ? num / den : 0,
+    audioCodec: a?.codec_name,
   }
 }

@@ -10,10 +10,10 @@
  *                    colour flattens)
  *   video   ffmpeg -> HEVC/AAC MP4, <=1080p30, hvc1 tag, faststart, SDR
  */
-import { mkdir, copyFile, stat } from 'node:fs/promises'
+import { mkdir, copyFile, stat, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
-import { toolPath, run, probe } from './ffmpeg.js'
+import { toolPath, run, probe, type Probe } from './ffmpeg.js'
 import type { Asset, AssetKind } from '../../shared/types.js'
 
 export const IMAGE_EXT = new Set([
@@ -29,7 +29,10 @@ export interface ConvertSettings {
   imageQuality: number
   /** Longest image side; 0 disables resizing. Never upscales. */
   maxDim: number
-  /** x265 CRF. Lower is better quality and larger. */
+  /**
+   * x265 CRF. Lower is better quality and larger. 28 measured at VMAF ~93 from
+   * a phone original (clean on phones and laptops) for ~25% less storage than 26.
+   */
   videoCrf: number
   videoPreset: string
 }
@@ -37,7 +40,7 @@ export interface ConvertSettings {
 export const DEFAULT_SETTINGS: ConvertSettings = {
   imageQuality: 62,
   maxDim: 1200,
-  videoCrf: 26,
+  videoCrf: 28,
   videoPreset: 'slow',
 }
 
@@ -142,14 +145,70 @@ export async function makeThumbnail(src: string, dest: string): Promise<void> {
 const SCALE =
   "scale=w='if(gt(iw,ih),-2,min(1080,iw))':h='if(gt(iw,ih),min(1080,ih),-2)'"
 
+/**
+ * Re-encoding must save at least this fraction of the source's size, or the
+ * source is remuxed instead. A video that is already HEVC was usually converted
+ * once already; a second pass measured -4.7 VMAF for only -8% size.
+ */
+export const MIN_REENCODE_SAVING = 0.15
+
+/** Already in the shape convertVideo produces, so it can be published as-is. */
+export function isWebReady(p: Probe): boolean {
+  return (
+    p.videoCodec === 'hevc' &&
+    p.pixFmt === 'yuv420p' &&
+    !p.isHdr &&
+    Math.min(p.width, p.height) <= 1080 &&
+    p.fps > 0 &&
+    p.fps <= 30.5 &&
+    (!p.hasAudio || p.audioCodec === 'aac')
+  )
+}
+
 export async function convertVideo(
   src: string,
   dest: string,
   settings: ConvertSettings,
   onProgress?: (fraction: number) => void,
-): Promise<{ width: number; height: number; durationSec: number; bytes: number }> {
+): Promise<{
+  width: number
+  height: number
+  durationSec: number
+  bytes: number
+  /** "remuxed": the source was repackaged, not re-encoded (no quality loss). */
+  method: 'encoded' | 'remuxed'
+}> {
   const info = await probe(src)
+  const webReady = isWebReady(info)
+  // A web-ready source gets a trial encode, kept only if it is worth it.
+  const target = webReady ? `${dest}.trial.mp4` : dest
 
+  await encodeVideo(src, target, info, settings, onProgress)
+
+  let method: 'encoded' | 'remuxed' = 'encoded'
+  if (webReady) {
+    const [{ size: srcBytes }, { size: encBytes }] = await Promise.all([stat(src), stat(target)])
+    if (encBytes > srcBytes * (1 - MIN_REENCODE_SAVING)) {
+      await remuxVideo(src, dest)
+      method = 'remuxed'
+    } else {
+      await rename(target, dest)
+    }
+    await rm(target, { force: true })
+  }
+
+  const out = await probe(dest)
+  const { size } = await stat(dest)
+  return { width: out.width, height: out.height, durationSec: out.durationSec, bytes: size, method }
+}
+
+async function encodeVideo(
+  src: string,
+  dest: string,
+  info: Probe,
+  settings: ConvertSettings,
+  onProgress?: (fraction: number) => void,
+): Promise<void> {
   let scale = SCALE
   const colour: string[] = []
   if (info.isHdr) {
@@ -194,10 +253,24 @@ export async function convertVideo(
     if (m) onProgress(Math.min(1, Number(m[1]) / 1e6 / total))
   })
   if (code !== 0) throw new Error(`encode failed: ${stderr.trim().slice(0, 300)}`)
+}
 
-  const out = await probe(dest)
-  const { size } = await stat(dest)
-  return { width: out.width, height: out.height, durationSec: out.durationSec, bytes: size }
+/** Repackage without re-encoding: same tag, faststart and stripped metadata as an encode. */
+async function remuxVideo(src: string, dest: string): Promise<void> {
+  const { code, stderr } = await run(toolPath('ffmpeg'), [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-i', src,
+    '-map', '0:v:0', '-map', '0:a:0?',
+    '-sn', '-dn',
+    // Phone video carries GPS location in its metadata; never publish it.
+    '-map_metadata', '-1', '-map_chapters', '-1',
+    '-c', 'copy',
+    '-tag:v', 'hvc1',
+    '-movflags', '+faststart',
+    '-f', 'mp4',
+    dest,
+  ])
+  if (code !== 0) throw new Error(`remux failed: ${stderr.trim().slice(0, 300)}`)
 }
 
 /** First frame, for the library grid and the editor's video node. */
