@@ -41,6 +41,22 @@ export const WORKER_SOURCE = `export default {
 }
 `
 
+const SITE_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.webmanifest': 'application/manifest+json',
+}
+
+function siteContentType(sitePath: string): string {
+  return SITE_TYPES[path.extname(sitePath).toLowerCase()] ?? contentTypeFor(sitePath)
+}
+
 interface ManifestEntry {
   hash: string
   size: number
@@ -116,16 +132,15 @@ export async function deploySite(
         const buf = contents.get(hash)
         if (!buf) continue
         const sitePath = Object.keys(manifest).find((k) => manifest[k].hash === hash)!
+        // The endpoint only accepts base64 file bodies (and ?base64=true).
         form.append(
           hash,
-          new File([new Uint8Array(buf).buffer as ArrayBuffer], hash, {
-            type: contentTypeFor(sitePath),
-          }),
+          new File([buf.toString('base64')], hash, { type: siteContentType(sitePath) }),
         )
       }
 
       const res = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${opts.accountId}/workers/assets/upload?base64=false`,
+        `https://api.cloudflare.com/client/v4/accounts/${opts.accountId}/workers/assets/upload?base64=true`,
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${session.jwt}` },

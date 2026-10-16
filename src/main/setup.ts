@@ -224,7 +224,10 @@ export async function provision(
     set('deploy', {
       status: 'failed',
       detail: e instanceof Error ? e.message : String(e),
-      remedy: 'Check the token has the "Workers Scripts — Edit" permission.',
+      remedy:
+        (e as { status?: number }).status === 401 || (e as { status?: number }).status === 403
+          ? 'Check the token has the "Workers Scripts — Edit" permission.'
+          : 'Publishing failed. Run setup again; if it keeps failing, send the detail above to whoever is maintaining the app.',
     })
     throw e
   }
