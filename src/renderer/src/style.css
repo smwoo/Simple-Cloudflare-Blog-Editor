@@ -168,3 +168,4 @@ iframe.preview{border:0;width:100%;height:100%;background:#fff}
 .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;
           padding:0;color:var(--muted);border-radius:var(--radius)}
 .icon-btn:hover:not(:disabled){color:var(--fg);background:var(--bg)}
+a{color:var(--accent)}

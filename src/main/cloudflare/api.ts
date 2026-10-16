@@ -193,12 +193,14 @@ export class CloudflareClient {
   // ------------------------------------------------------------ zones
 
   async listZones(): Promise<{ id: string; name: string; status: string }[]> {
-    return (await this.request<{ id: string; name: string; status: string }[]>('/zones')) ?? []
+    return (await this.request<{ id: string; name: string; status: string }[]>('/zones?per_page=50')) ?? []
   }
 
-  async findZone(domain: string) {
-    const zones = await this.listZones()
-    return zones.find((z) => z.name === domain.toLowerCase()) ?? null
+  /** Hostnames attached to Workers in this account, and which Worker has each. */
+  async listCustomDomains(accountId: string): Promise<{ id: string; hostname: string; service: string }[]> {
+    return (await this.request<{ id: string; hostname: string; service: string }[]>(
+      `/accounts/${accountId}/workers/domains`,
+    )) ?? []
   }
 
   /**
@@ -219,6 +221,10 @@ export class CloudflareClient {
         environment: 'production',
       }),
     })
+  }
+
+  async detachCustomDomain(accountId: string, id: string): Promise<void> {
+    await this.request(`/accounts/${accountId}/workers/domains/${id}`, { method: 'DELETE' })
   }
 
   async customDomainStatus(

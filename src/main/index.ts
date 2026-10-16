@@ -14,7 +14,7 @@ import { R2 } from './cloudflare/r2.js'
 import { createFetchHandler } from './cloudflare/fetchHandler.js'
 import { provision, type SetupInput } from './setup.js'
 import { publish, saveDraft, backupSource, restoreSource } from './publish.js'
-import { attachDomain, registrarUrl } from './domain.js'
+import { attachDomain, registrarUrl, listBlogDomains, removeDomain } from './domain.js'
 import { initUpdater, updateState } from './updater.js'
 import {
   listPosts,
@@ -93,6 +93,13 @@ function createWindow() {
     )
     win.webContents.once('did-finish-load', async () => {
       await new Promise((r) => setTimeout(r, 2500))
+      // BLOG_EDITOR_SMOKE_CLICK="[aria-label=Settings]" opens a screen before the shot.
+      if (process.env.BLOG_EDITOR_SMOKE_CLICK) {
+        await win!.webContents.executeJavaScript(
+          `document.querySelector(${JSON.stringify(process.env.BLOG_EDITOR_SMOKE_CLICK)})?.click()`,
+        )
+        await new Promise((r) => setTimeout(r, 2500))
+      }
       const image = await win!.webContents.capturePage()
       const { writeFile } = await import('node:fs/promises')
       await writeFile(process.env.BLOG_EDITOR_SMOKE!, image.toPNG())
@@ -333,6 +340,37 @@ function registerIpc() {
     // secured: the attachment is real, and builds must keep using the address.
     if (res.attached && res.domain) {
       config = { ...config, customDomain: res.domain }
+      await store.writeConfig(config)
+    }
+    return res
+  })
+
+  ipcMain.handle('domain:list', async () => {
+    if (!cf || !config) return []
+    let domains: Awaited<ReturnType<typeof listBlogDomains>>
+    try {
+      domains = await listBlogDomains(cf, config)
+    } catch {
+      return []
+    }
+    // The saved address was detached elsewhere (e.g. the Cloudflare dashboard):
+    // stop building links to it. Only reached when the listing succeeded.
+    if (config.customDomain && !domains.some((d) => d.hostname === config!.customDomain)) {
+      const next = domains[0]?.hostname
+      const { customDomain: _gone, ...rest } = config
+      config = next ? { ...rest, customDomain: next } : rest
+      await store.writeConfig(config)
+      await setBaseUrl(store.paths().site, next ? `https://${next}` : config.siteUrl)
+      domains = domains.map((d) => ({ ...d, primary: d.hostname === next }))
+    }
+    return domains
+  })
+  ipcMain.handle('domain:remove', async (_e, hostname: string) => {
+    if (!cf || !config) return { ok: false, message: 'This blog is not set up yet.' }
+    const res = await removeDomain(hostname, { cf, config, siteDir: store.paths().site })
+    if (res.customDomain !== config.customDomain) {
+      const { customDomain: _old, ...rest } = config
+      config = res.customDomain ? { ...rest, customDomain: res.customDomain } : rest
       await store.writeConfig(config)
     }
     return res

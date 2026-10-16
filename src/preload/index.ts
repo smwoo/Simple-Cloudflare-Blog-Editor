@@ -55,6 +55,9 @@ const api = {
   // domain
   registrarUrl: (domain?: string) => invoke<string | null>('domain:registrarUrl', domain),
   attachDomain: (domain: string) => invoke<any>('domain:attach', domain),
+  listDomains: () =>
+    invoke<{ hostname: string; withWww: boolean; primary: boolean }[]>('domain:list'),
+  removeDomain: (hostname: string) => invoke<any>('domain:remove', hostname),
   onDomainProgress: (fn: (p: any) => void) => on('domain:progress', fn),
 
   // misc
