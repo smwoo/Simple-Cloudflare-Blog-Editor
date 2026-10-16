@@ -80,7 +80,9 @@ describe('convertVideo', () => {
   })
 
   it('remuxes an already-converted video: lossless, but GPS still stripped', async () => {
-    const src = await makeClip('converted.mp4', ['-c:v', 'libx265', '-crf', '28', '-tag:v', 'hev1', '-x265-params', 'log-level=error'])
+    // Compressed far harder than CRF 28, so no x265 version can re-encode it
+    // ≥15% smaller; at CRF 28 the outcome varied with the encoder build.
+    const src = await makeClip('converted.mp4', ['-c:v', 'libx265', '-crf', '40', '-tag:v', 'hev1', '-x265-params', 'log-level=error'])
     expect((await tags(src)).format.location).toBeDefined()
 
     const dest = path.join(dir, 'converted-out.mp4')
