@@ -1,11 +1,58 @@
 #!/usr/bin/env node
 // Quick debug script to test token validation
-import { CloudflareClient } from './out/main/index.js'
+// This uses the source files directly, not the built bundle
 
 const token = process.argv[2]
 if (!token) {
   console.error('Usage: node debug-token.mjs <token>')
   process.exit(1)
+}
+
+// Simple CloudflareError class
+class CloudflareError extends Error {
+  constructor(message, status, code) {
+    super(message)
+    this.name = 'CloudflareError'
+    this.status = status
+    this.code = code
+  }
+}
+
+// Simple CloudflareClient
+class CloudflareClient {
+  constructor(token) {
+    this.token = token
+  }
+
+  async request(pathname, init = {}) {
+    const BASE = 'https://api.cloudflare.com/client/v4'
+    const res = await fetch(`${BASE}${pathname}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        ...(init.raw ? {} : { 'Content-Type': 'application/json' }),
+        ...(init.headers ?? {}),
+      },
+    })
+
+    const text = await res.text()
+    let json
+    try {
+      json = JSON.parse(text)
+    } catch {
+      /* non-JSON error body */
+    }
+
+    if (!res.ok || (json && !json.success)) {
+      const err = json?.errors?.[0]
+      throw new CloudflareError(
+        err?.message ?? `${res.status} ${res.statusText}`,
+        res.status,
+        err?.code,
+      )
+    }
+    return json?.result ?? undefined
+  }
 }
 
 const client = new CloudflareClient(token)
@@ -50,7 +97,7 @@ async function debug() {
       console.log(`     ✗ Workers Scripts — Edit (${e.status}: ${e.message})`)
     }
     
-    console.log('   Zones:')
+    console.log('   Zones (optional):')
     try {
       await client.request('/zones?per_page=1')
       console.log('     ✓ Zone — Read')

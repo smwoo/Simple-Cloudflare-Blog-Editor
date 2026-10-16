@@ -8,3 +8,5 @@ release/
 resources/bin/
 # local app data / scratch
 .scratch/
+.claude/
+
