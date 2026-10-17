@@ -5,6 +5,7 @@ import { Library } from './library/Library.js'
 import { Setup } from './setup/Setup.js'
 import { GroupDialog } from './panes/GroupDialog.js'
 import { Settings } from './panes/Settings.js'
+import { DeleteDialog } from './panes/DeleteDialog.js'
 import { assetStore, useAssets } from './editor/assetStore.js'
 import { appendToGalleryOrInsert, insertAssets } from './editor/insert.js'
 import type { Post, PMNode, BlogConfig, Asset } from '../../shared/types.js'
@@ -34,6 +35,7 @@ export function App() {
   const [publishing, setPublishing] = useState<string | null>(null)
   const [banner, setBanner] = useState<{ kind: 'ok' | 'err' | 'warn'; text: string; log?: string } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [previewOrigin, setPreviewOrigin] = useState<string | null>(null)
   const assets = useAssets()
 
@@ -174,6 +176,50 @@ export function App() {
     } else {
       setBanner({ kind: 'err', text: res.message ?? 'Could not publish.', log: res.log })
     }
+  }
+
+  /** A pending autosave would write the post back after it is deleted or moved. */
+  const cancelAutosave = () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = null
+    setSaveState('idle')
+  }
+
+  const doUnpublish = async () => {
+    if (!current) return
+    cancelAutosave()
+    const post = { ...current, frontMatter: { ...current.frontMatter, draft: true } }
+    setCurrent(post)
+    latest.current = post
+
+    setPublishing('Updating…')
+    setBanner(null)
+    const res = await window.api.unpublish(post)
+    setPublishing(null)
+    await refresh()
+    setBanner(
+      res.ok
+        ? { kind: 'ok', text: 'Back to draft. It is no longer on your blog.' }
+        : { kind: 'err', text: res.message ?? 'Could not update your blog.', log: res.log },
+    )
+  }
+
+  const doDelete = async (media: boolean) => {
+    if (!current) return
+    setConfirmDelete(false)
+    cancelAutosave()
+
+    setPublishing('Deleting…')
+    setBanner(null)
+    const res = await window.api.removePost(current.slug, media)
+    setPublishing(null)
+    const list = await refresh()
+    setCurrent(list[0] ?? null)
+    setBanner(
+      res.ok
+        ? { kind: 'ok', text: 'Post deleted.' }
+        : { kind: 'err', text: res.message ?? 'Could not delete the post.', log: res.log },
+    )
   }
 
   const togglePreview = async () => {
@@ -369,6 +415,14 @@ export function App() {
                   Preparing {pendingCount}
                 </span>
               )}
+              <button className="ghost danger" onClick={() => setConfirmDelete(true)} disabled={!!publishing}>
+                Delete
+              </button>
+              {!current.frontMatter.draft && (
+                <button onClick={doUnpublish} disabled={!!publishing}>
+                  Back to draft
+                </button>
+              )}
               <button onClick={togglePreview}>Preview</button>
               <button className="primary" onClick={doPublish} disabled={!!publishing}>
                 {publishing ?? (current.frontMatter.draft ? 'Publish' : 'Update')}
@@ -392,6 +446,15 @@ export function App() {
           suggestions={groupSuggestions}
           onConfirm={ingest}
           onCancel={() => setPendingFiles(null)}
+        />
+      )}
+      {confirmDelete && current && (
+        <DeleteDialog
+          title={current.frontMatter.title}
+          published={!current.frontMatter.draft}
+          mediaCount={assets.filter((a) => a.postSlug === current.slug).length}
+          onConfirm={doDelete}
+          onCancel={() => setConfirmDelete(false)}
         />
       )}
       {showSettings && <Settings config={config} onClose={() => setShowSettings(false)} />}

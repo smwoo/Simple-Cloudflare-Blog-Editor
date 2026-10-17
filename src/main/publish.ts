@@ -11,7 +11,7 @@ import path from 'node:path'
 import { CloudflareClient } from './cloudflare/api.js'
 import { R2 } from './cloudflare/r2.js'
 import { deploySite, waitForLive } from './cloudflare/deploy.js'
-import { build, writePost, listPosts, siteOverlay } from './site/hugo.js'
+import { build, writePost, readPost, deletePost, listPosts, siteOverlay } from './site/hugo.js'
 import { serializePost, referencedKeys } from '../shared/markdown.js'
 import type { BlogConfig, Post } from '../shared/types.js'
 import type { Library } from './db/library.js'
@@ -117,6 +117,84 @@ export async function republishSite(
     return { ok: false, url, message: 'Your blog could not be rebuilt.', log: built.log }
   }
   return deployAndVerify(built.publicDir, deps, url, config.siteUrl, onProgress)
+}
+
+/**
+ * Take a published post off the blog and keep it as a draft. Its media stays
+ * in the bucket, so publishing it again is instant.
+ */
+export async function unpublishPost(
+  post: Post,
+  deps: { config: BlogConfig; cf: CloudflareClient; r2: R2; siteDir: string },
+  onProgress: (p: PublishProgress) => void,
+): Promise<PublishResult> {
+  const draft: Post = { ...post, frontMatter: { ...post.frontMatter, draft: true } }
+  await saveDraft(draft, deps.siteDir, deps.r2)
+  const res = await republishSite(deps, onProgress)
+  return res.ok
+    ? res
+    : {
+        ...res,
+        message:
+          'The post is a draft again here, but your blog could not be updated just now. ' +
+          'It will come off the next time you publish.',
+      }
+}
+
+/**
+ * Delete a post: the local file, its backup, and the page on the blog.
+ *
+ * With `media`, its photos and videos go from the bucket too, except any that
+ * another post still shows. That happens only after the redeploy succeeds, so
+ * a failed deploy never leaves a live page with broken images. The originals
+ * stay on this computer either way. Dated backups in `_source/history/` are
+ * kept, so a deleted post is still recoverable by hand.
+ */
+export async function removePost(
+  slug: string,
+  opts: { media: boolean },
+  deps: { config: BlogConfig; cf: CloudflareClient; r2: R2; library: Library; siteDir: string },
+  onProgress: (p: PublishProgress) => void,
+): Promise<PublishResult & { mediaDeleted: number }> {
+  const { r2, library, siteDir } = deps
+  const post = await readPost(siteDir, slug)
+  await deletePost(siteDir, slug)
+  await r2.delete(`_source/posts/${slug}.md`).catch(() => {})
+
+  if (post && !post.frontMatter.draft) {
+    const res = await republishSite(deps, onProgress)
+    if (!res.ok) {
+      return {
+        ...res,
+        mediaDeleted: 0,
+        message:
+          'The post is deleted here, but your blog could not be updated just now. ' +
+          'It will come off the next time you publish.',
+      }
+    }
+  }
+
+  let mediaDeleted = 0
+  if (opts.media) {
+    const stillShown = new Set<string>()
+    for (const other of await listPosts(siteDir)) {
+      for (const k of referencedKeys(other.doc)) stillShown.add(k)
+      if (other.frontMatter.cover) stillShown.add(other.frontMatter.cover)
+    }
+    for (const asset of library.forPost(slug)) {
+      if (stillShown.has(asset.key)) continue
+      await r2.delete(asset.key).catch(() => {})
+      await library.remove(asset.key)
+      mediaDeleted++
+    }
+  }
+
+  const config = deps.config
+  return {
+    ok: true,
+    url: config.customDomain ? `https://${config.customDomain}/` : `${config.siteUrl}/`,
+    mediaDeleted,
+  }
 }
 
 async function deployAndVerify(

@@ -13,7 +13,15 @@ import { CloudflareClient } from './cloudflare/api.js'
 import { R2 } from './cloudflare/r2.js'
 import { createFetchHandler } from './cloudflare/fetchHandler.js'
 import { provision, type SetupInput } from './setup.js'
-import { publish, republishSite, saveDraft, backupSource, restoreSource } from './publish.js'
+import {
+  publish,
+  republishSite,
+  unpublishPost,
+  removePost as removePostEverywhere,
+  saveDraft,
+  backupSource,
+  restoreSource,
+} from './publish.js'
 import { attachDomain, registrarUrl, listBlogDomains, removeDomain } from './domain.js'
 import { initUpdater, updateState } from './updater.js'
 import {
@@ -244,6 +252,24 @@ function registerIpc() {
     await store.writeConfig(config)
     return republishSite({ config, cf, siteDir: store.paths().site }, (p) =>
       send('publish:progress', p),
+    )
+  })
+
+  ipcMain.handle('posts:unpublish', async (_e, post: Post) => {
+    if (!cf || !r2 || !config) return { ok: false, message: 'This blog is not set up yet.' }
+    return unpublishPost(post, { config, cf, r2, siteDir: store.paths().site }, (p) =>
+      send('publish:progress', p),
+    )
+  })
+
+  /** Delete a post from this computer, its backup and the blog; unlike posts:delete, which is local only. */
+  ipcMain.handle('posts:remove', async (_e, args: { slug: string; media: boolean }) => {
+    if (!cf || !r2 || !config) return { ok: false, message: 'This blog is not set up yet.' }
+    return removePostEverywhere(
+      args.slug,
+      { media: args.media },
+      { config, cf, r2, library, siteDir: store.paths().site },
+      (p) => send('publish:progress', p),
     )
   })
 
