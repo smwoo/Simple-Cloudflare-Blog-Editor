@@ -13,7 +13,7 @@ import { CloudflareClient } from './cloudflare/api.js'
 import { R2 } from './cloudflare/r2.js'
 import { createFetchHandler } from './cloudflare/fetchHandler.js'
 import { provision, type SetupInput } from './setup.js'
-import { publish, saveDraft, backupSource, restoreSource } from './publish.js'
+import { publish, republishSite, saveDraft, backupSource, restoreSource } from './publish.js'
 import { attachDomain, registrarUrl, listBlogDomains, removeDomain } from './domain.js'
 import { initUpdater, updateState } from './updater.js'
 import {
@@ -24,6 +24,7 @@ import {
   checkHugo,
   PreviewServer,
   scaffold,
+  syncTemplate,
   setBaseUrl,
 } from './site/hugo.js'
 import { referencedKeys } from '../shared/markdown.js'
@@ -235,6 +236,17 @@ function registerIpc() {
     )
   })
 
+  /** Set or clear (empty string) the visitor password, then republish so it takes effect. */
+  ipcMain.handle('site:setPassword', async (_e, password: string) => {
+    if (!cf || !config) return { ok: false, message: 'This blog is not set up yet.' }
+    const { sitePassword: _old, ...rest } = config
+    config = password.trim() ? { ...rest, sitePassword: password.trim() } : rest
+    await store.writeConfig(config)
+    return republishSite({ config, cf, siteDir: store.paths().site }, (p) =>
+      send('publish:progress', p),
+    )
+  })
+
   // ---- media
   ipcMain.handle('media:pick', async () => {
     const res = await dialog.showOpenDialog(win!, {
@@ -442,6 +454,7 @@ app.whenReady().then(async () => {
   // A blog configured earlier but never scaffolded (interrupted setup) is
   // recoverable rather than fatal.
   if (config && !existsSync(paths.site)) await scaffold(paths.site, config)
+  else if (config) await syncTemplate(paths.site)
   if (config?.customDomain) await setBaseUrl(paths.site, `https://${config.customDomain}`)
 
   registerMediaProtocol()

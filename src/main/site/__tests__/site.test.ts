@@ -19,6 +19,8 @@ import {
   checkHugo,
   setBaseUrl,
   PreviewServer,
+  siteOverlay,
+  passwordHash,
 } from '../hugo.js'
 import type { Post, BlogConfig, PMNode } from '../../../shared/types.js'
 
@@ -196,6 +198,74 @@ describe('hugo build', () => {
 
     const withDrafts = await build(dir, { drafts: true })
     expect(existsSync(path.join(withDrafts.publicDir, 'posts', 'draft-post', 'index.html'))).toBe(true)
+  })
+})
+
+describe('privacy', () => {
+  const home = () => readFile(path.join(dir, 'public', 'index.html'), 'utf8')
+  const published = (dir: string, rel: string) => existsSync(path.join(dir, 'public', rel))
+
+  it('asks search engines to stay away, password or not', async () => {
+    if (!hugoOk) return
+    const res = await build(dir, { overlay: siteOverlay(config) })
+    expect(res.ok, res.log).toBe(true)
+    expect(await home()).toMatch(/<meta name="?robots"? content="noindex, nofollow"/)
+    expect(published(dir, 'sitemap.xml')).toBe(false)
+    // No password: no veil, and the feed stays.
+    expect(await home()).not.toMatch(/id="?veil/)
+    expect(published(dir, 'index.xml')).toBe(true)
+  })
+
+  it('veils every page behind the password and drops the feed', async () => {
+    if (!hugoOk) return
+    const res = await build(dir, { overlay: siteOverlay({ ...config, sitePassword: ' hunter2 ' }) })
+    expect(res.ok, res.log).toBe(true)
+    const hash = passwordHash(config.name, 'hunter2')
+    for (const page of ['index.html', 'posts/nov-2026/index.html']) {
+      const html = await readFile(path.join(dir, 'public', page), 'utf8')
+      expect(html).toMatch(/id="?veil/)
+      expect(html).toContain(hash)
+      expect(html).not.toContain('hunter2')
+    }
+    expect(published(dir, 'index.xml')).toBe(false)
+    expect(await home()).not.toContain('application/rss+xml')
+  })
+
+  it('the page script accepts the password and nothing else', async () => {
+    if (!hugoOk) return
+    await build(dir, { overlay: siteOverlay({ ...config, sitePassword: 'hunter2' }) })
+    const html = await home()
+    const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+      .map((m) => m[1])
+      .find((s) => s.includes('crypto.subtle'))!
+
+    // Run the page's own submit handler against a stub DOM.
+    const tryPassword = async (typed: string) => {
+      let submit: (e: { preventDefault(): void }) => Promise<void> | void = () => {}
+      const err = { textContent: '' }
+      const classes = new Set(['veiled'])
+      const stored: Record<string, string> = {}
+      const form = {
+        password: { value: typed, select() {} },
+        querySelector: () => err,
+        addEventListener: (_: string, fn: typeof submit) => (submit = fn),
+      }
+      const document = {
+        getElementById: () => form,
+        documentElement: { classList: { remove: (c: string) => classes.delete(c) } },
+      }
+      const localStorage = { setItem: (k: string, v: string) => (stored[k] = v) }
+      new Function('document', 'localStorage', script)(document, localStorage)
+      submit({ preventDefault() {} })
+      await new Promise((r) => setTimeout(r, 50))
+      return { open: !classes.has('veiled'), stored: stored.veil }
+    }
+
+    expect(await tryPassword('hunter2 ')).toEqual({
+      open: true,
+      stored: passwordHash(config.name, 'hunter2'),
+    })
+    expect((await tryPassword('Hunter2')).open).toBe(false)
   })
 })
 

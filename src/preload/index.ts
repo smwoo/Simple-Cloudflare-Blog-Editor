@@ -60,6 +60,9 @@ const api = {
   removeDomain: (hostname: string) => invoke<any>('domain:remove', hostname),
   onDomainProgress: (fn: (p: any) => void) => on('domain:progress', fn),
 
+  // site
+  setSitePassword: (password: string) => invoke<any>('site:setPassword', password),
+
   // misc
   openExternal: (url: string) => invoke<void>('shell:open', url),
   reveal: (which: 'originals' | 'site') => invoke<void>('shell:reveal', which),

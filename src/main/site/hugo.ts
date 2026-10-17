@@ -6,6 +6,7 @@
  * than somewhere the owner cannot see them.
  */
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -49,6 +50,42 @@ export async function scaffold(dir: string, config: BlogConfig): Promise<void> {
       .replace('__AUTHOR__', config.author.replace(/"/g, '\\"')),
   )
   await mkdir(path.join(dir, 'content', 'posts'), { recursive: true })
+}
+
+/**
+ * Bring an existing blog's layouts up to the bundled template.
+ *
+ * `scaffold` copies the template once, so without this a blog set up on an
+ * older version never sees a template fix. Layouts are the app's, never the
+ * owner's, so replacing them wholesale is safe. hugo.yaml and content are
+ * left alone.
+ */
+export async function syncTemplate(dir: string): Promise<void> {
+  const layouts = path.join(dir, 'layouts')
+  await rm(layouts, { recursive: true, force: true })
+  await cp(path.join(templateDir(), 'layouts'), layouts, { recursive: true })
+}
+
+/** SHA-256 of the site password, salted with the blog name. The page script hashes the same way. */
+export function passwordHash(salt: string, password: string): string {
+  return createHash('sha256').update(`${salt}\n${password.trim()}`).digest('hex')
+}
+
+/**
+ * Config overlay for published builds, generated from the blog config rather
+ * than kept in hugo.yaml so that existing blogs get it without a migration.
+ *
+ * The password is a veil, not a lock: the page carries a hash and hides itself
+ * until a matching password is typed. The HTML and media stay public to anyone
+ * who looks, so the RSS feed, which would show the posts in full, goes too.
+ */
+export function siteOverlay(config: Pick<BlogConfig, 'name' | 'sitePassword'>): object {
+  const password = config.sitePassword?.trim()
+  if (!password) return { disableKinds: ['sitemap'] }
+  return {
+    disableKinds: ['sitemap', 'rss'],
+    params: { veil: { salt: config.name, hash: passwordHash(config.name, password) } },
+  }
 }
 
 /** Rewrite baseURL in place — all a custom domain change costs. */
@@ -106,7 +143,12 @@ export interface BuildResult {
  * default, which is how the reference site accumulated 12 hashed stylesheets
  * where a clean build produces 1.
  */
-export async function build(dir: string, opts: { drafts?: boolean } = {}): Promise<BuildResult> {
+const PUBLISH_CONFIG = '.publish-config.json'
+
+export async function build(
+  dir: string,
+  opts: { drafts?: boolean; overlay?: object } = {},
+): Promise<BuildResult> {
   const publicDir = path.join(dir, 'public')
   const started = Date.now()
   // --cleanDestinationDir alone leaves stray files behind, and everything in
@@ -114,6 +156,10 @@ export async function build(dir: string, opts: { drafts?: boolean } = {}): Promi
   await rm(publicDir, { recursive: true, force: true })
   const args = ['--minify', '--cleanDestinationDir', '-s', dir, '-d', publicDir]
   if (opts.drafts) args.push('-D')
+  if (opts.overlay) {
+    await writeFile(path.join(dir, PUBLISH_CONFIG), JSON.stringify(opts.overlay))
+    args.push('--config', `hugo.yaml,${PUBLISH_CONFIG}`)
+  }
 
   const { code, stdout, stderr } = await run(hugoBin(), args)
   return {

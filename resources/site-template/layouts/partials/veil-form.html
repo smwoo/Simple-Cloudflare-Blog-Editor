@@ -1,0 +1,36 @@
+{{ with site.Params.veil }}
+<form id="veil">
+  <h1>{{ site.Title }}</h1>
+  <p>This blog is private. Enter the password to read it.</p>
+  <div class="row">
+    <input type="password" name="password" aria-label="Password" autocomplete="current-password" autofocus>
+    <button type="submit">Open</button>
+  </div>
+  <p class="err" aria-live="polite"></p>
+</form>
+<script>
+(function () {
+  var salt = {{ .salt }}, hash = {{ .hash }}
+  var form = document.getElementById('veil')
+  var err = form.querySelector('.err')
+  form.addEventListener('submit', function (e) {
+    e.preventDefault()
+    // Same as passwordHash() in the app: sha256(salt + "\n" + trimmed password).
+    var text = salt + '\n' + form.password.value.trim()
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)).then(function (buf) {
+      var hex = Array.from(new Uint8Array(buf), function (b) {
+        return b.toString(16).padStart(2, '0')
+      }).join('')
+      if (hex !== hash) {
+        err.textContent = 'That is not the password.'
+        form.password.select()
+        return
+      }
+      // Remember it on this device, so family types it once, not on every page.
+      try { localStorage.setItem('veil', hash) } catch (e) {}
+      document.documentElement.classList.remove('veiled')
+    })
+  })
+})()
+</script>
+{{ end }}

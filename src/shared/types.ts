@@ -121,6 +121,11 @@ export interface BlogConfig {
   customDomain?: string
   title: string
   author: string
+  /**
+   * Password visitors type to see the blog. Kept in the clear because the
+   * owner hands it out, and because it guards nothing: see `siteOverlay`.
+   */
+  sitePassword?: string
 }
 
 /** Never serialised to disk in the clear — held in Electron safeStorage. */

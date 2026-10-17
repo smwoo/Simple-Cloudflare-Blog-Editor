@@ -11,7 +11,7 @@ import path from 'node:path'
 import { CloudflareClient } from './cloudflare/api.js'
 import { R2 } from './cloudflare/r2.js'
 import { deploySite, waitForLive } from './cloudflare/deploy.js'
-import { build, writePost, listPosts } from './site/hugo.js'
+import { build, writePost, listPosts, siteOverlay } from './site/hugo.js'
 import { serializePost, referencedKeys } from '../shared/markdown.js'
 import type { BlogConfig, Post } from '../shared/types.js'
 import type { Library } from './db/library.js'
@@ -74,7 +74,7 @@ export async function publish(
   // ---- 2. write and build
   onProgress({ phase: 'building' })
   await writePost(siteDir, post)
-  const built = await build(siteDir)
+  const built = await build(siteDir, { overlay: siteOverlay(config) })
   if (!built.ok) {
     return {
       ok: false,
@@ -91,14 +91,49 @@ export async function publish(
     /* backup is best-effort; never block publishing on it */
   })
 
-  // ---- 4. deploy
+  // ---- 4. deploy, and 5. verify against the real URL
+  return deployAndVerify(
+    built.publicDir,
+    { config, cf },
+    postUrl,
+    post.frontMatter.draft ? config.siteUrl : postUrl,
+    onProgress,
+  )
+}
+
+/**
+ * Rebuild and redeploy the whole site with no post changed: what a site-wide
+ * setting such as the password needs to take effect.
+ */
+export async function republishSite(
+  deps: { config: BlogConfig; cf: CloudflareClient; siteDir: string },
+  onProgress: (p: PublishProgress) => void,
+): Promise<PublishResult> {
+  const { config, siteDir } = deps
+  const url = config.customDomain ? `https://${config.customDomain}/` : `${config.siteUrl}/`
+  onProgress({ phase: 'building' })
+  const built = await build(siteDir, { overlay: siteOverlay(config) })
+  if (!built.ok) {
+    return { ok: false, url, message: 'Your blog could not be rebuilt.', log: built.log }
+  }
+  return deployAndVerify(built.publicDir, deps, url, config.siteUrl, onProgress)
+}
+
+async function deployAndVerify(
+  publicDir: string,
+  deps: { config: BlogConfig; cf: CloudflareClient },
+  url: string,
+  verifyUrl: string,
+  onProgress: (p: PublishProgress) => void,
+): Promise<PublishResult> {
+  const { config, cf } = deps
   onProgress({ phase: 'deploying' })
   try {
     await deploySite(cf, {
       accountId: config.accountId,
       scriptName: config.name,
       bucket: config.bucket,
-      publicDir: built.publicDir,
+      publicDir,
       onProgress: (done, total) =>
         onProgress({ phase: 'deploying', fraction: total ? done / total : undefined }),
     })
@@ -106,7 +141,7 @@ export async function publish(
     const err = e as { status?: number; message?: string }
     return {
       ok: false,
-      url: postUrl,
+      url,
       message:
         err.status === 403 || err.status === 401
           ? 'The app lost permission to your Cloudflare account.'
@@ -115,18 +150,16 @@ export async function publish(
     }
   }
 
-  // ---- 5. verify against the real URL, which needs no extra credential
+  // The real URL needs no extra credential to check.
   onProgress({ phase: 'verifying' })
-  const live = await waitForLive(post.frontMatter.draft ? config.siteUrl : postUrl, {
-    timeoutMs: 90_000,
-  })
+  const live = await waitForLive(verifyUrl, { timeoutMs: 90_000 })
 
   onProgress({ phase: 'done' })
   return live
-    ? { ok: true, url: postUrl }
+    ? { ok: true, url }
     : {
         ok: false,
-        url: postUrl,
+        url,
         message:
           'Published, but the page is not answering yet. It usually appears within a minute.',
       }

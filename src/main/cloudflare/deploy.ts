@@ -36,6 +36,8 @@ export const WORKER_SOURCE = `export default {
     // Media keys are never reused, so this can be immutable. Cloudflare's CDN
     // caches on it, which is why repeat views never reach the Worker.
     headers.set('cache-control', 'public, max-age=31536000, immutable')
+    // Pages carry a robots meta tag; photos and videos can only say it here.
+    headers.set('x-robots-tag', 'noindex')
     return new Response(obj.body, { headers })
   },
 }

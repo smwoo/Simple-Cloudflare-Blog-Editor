@@ -13,7 +13,7 @@ import path from 'node:path'
 import { CloudflareClient } from './cloudflare/api.js'
 import { R2 } from './cloudflare/r2.js'
 import { deploySite, waitForLive } from './cloudflare/deploy.js'
-import { scaffold, build, checkHugo } from './site/hugo.js'
+import { scaffold, build, checkHugo, siteOverlay } from './site/hugo.js'
 import { assertFfmpegVersion } from './media/ffmpeg.js'
 import type { BlogConfig, Secrets } from '../shared/types.js'
 
@@ -202,7 +202,7 @@ export async function provision(
 
   // ---- 6. build
   set('build', { status: 'running' })
-  const built = await build(siteDir)
+  const built = await build(siteDir, { overlay: siteOverlay(config) })
   if (!built.ok) {
     set('build', { status: 'failed', detail: built.log, remedy: 'Send this report to whoever set up your blog.' })
     throw new Error('hugo build failed')

@@ -815,7 +815,9 @@ somewhere to attach later if it is ever needed.
 5. **Privacy.** These blogs are friends-and-family. A client-side password prompt is
    a sign, not a lock — the HTML and every media URL stay fully public to anyone who
    looks. Cloudflare Access is a real lock and is configurable per Worker. Decide
-   which the template ships with.
+   which the template ships with. **Decided: the sign.** An optional password in
+   Settings veils every page (hash compared in the browser, remembered per device)
+   and drops the RSS feed. Every blog asks search engines not to index it.
 
 ---
 

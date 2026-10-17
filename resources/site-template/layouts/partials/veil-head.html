@@ -1,0 +1,27 @@
+{{- /*
+  The password veil. It hides the page and asks for the password. It is not a
+  lock: the HTML is all here, and only a hash of the password is compared.
+  This runs before the body paints, so the page never flashes into view.
+*/ -}}
+{{ with site.Params.veil }}
+<style>
+#veil{display:none}
+html.veiled body>*{display:none}
+html.veiled body>#veil{display:flex}
+#veil{min-height:100vh;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:20px;text-align:center;font-family:ui-sans-serif,system-ui,sans-serif}
+#veil h1{font-size:1.3rem;margin:0}
+#veil p{margin:0;color:var(--muted);font-size:.92rem}
+#veil .row{display:flex;gap:8px;margin-top:6px}
+#veil input,#veil button{font:inherit;font-size:1rem;padding:9px 12px;border-radius:var(--radius);border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+#veil button{background:var(--accent);border-color:var(--accent);color:#fff;cursor:pointer}
+#veil .err{color:#c2410c;min-height:1.4em}
+</style>
+<script>
+(function () {
+  try {
+    if (localStorage.getItem('veil') === {{ .hash }}) return
+  } catch (e) {}
+  document.documentElement.classList.add('veiled')
+})()
+</script>
+{{ end }}

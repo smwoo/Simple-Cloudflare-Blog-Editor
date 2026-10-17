@@ -3,15 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{{- /* A friends-and-family blog: keep it out of search results. */}}
+<meta name="robots" content="noindex, nofollow">
 <title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} · {{ site.Title }}{{ end }}</title>
 {{ with .Params.description }}<meta name="description" content="{{ . }}">{{ end }}
 <meta property="og:title" content="{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }}{{ end }}">
 {{ with .Params.description }}<meta property="og:description" content="{{ . }}">{{ end }}
 {{ with .Params.cover }}{{ with .image }}<meta property="og:image" content="{{ . | absURL }}">{{ end }}{{ end }}
-<link rel="alternate" type="application/rss+xml" href="{{ "index.xml" | absURL }}">
+{{ with site.Home.OutputFormats.Get "rss" }}<link rel="alternate" type="application/rss+xml" href="{{ .Permalink }}">{{ end }}
 {{ partialCached "style.html" . }}
+{{ partialCached "veil-head.html" . }}
 </head>
 <body>
+{{ partialCached "veil-form.html" . }}
 <header class="site">
   <a class="brand" href="{{ "/" | relURL }}">{{ site.Title }}</a>
 </header>

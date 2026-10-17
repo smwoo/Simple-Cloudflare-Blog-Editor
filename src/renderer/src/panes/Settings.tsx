@@ -30,6 +30,9 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
   const [stats, setStats] = useState<any>(null)
   const [domain, setDomain] = useState('')
   const [domainMsg, setDomainMsg] = useState<string | null>(null)
+  const [password, setPassword] = useState<string>(initialConfig?.sitePassword ?? '')
+  const [passwordBusy, setPasswordBusy] = useState(false)
+  const [passwordMsg, setPasswordMsg] = useState<string | null>(null)
 
   const loadDomains = async () => {
     setDomains(await window.api.listDomains())
@@ -77,6 +80,22 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
     )
     await loadDomains()
     setDomainBusy(null)
+  }
+
+  const savePassword = async (next: string) => {
+    setPasswordBusy(true)
+    setPasswordMsg('Updating your blog… this can take a minute.')
+    const res = await window.api.setSitePassword(next)
+    setConfig((await window.api.status()).config)
+    setPassword(next.trim())
+    setPasswordMsg(
+      res.ok
+        ? next.trim()
+          ? 'Done. Visitors now need the password.'
+          : 'Done. Anyone with the address can read your blog.'
+        : (res.message ?? 'Could not update your blog.'),
+    )
+    setPasswordBusy(false)
   }
 
   const mb = (n: number) => `${(n / 1e6).toFixed(0)} MB`
@@ -129,6 +148,46 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
           <button className="ghost" onClick={() => window.api.reveal('originals')}>
             Show originals folder
           </button>
+        </div>
+
+        <div className="card">
+          <strong style={{ fontSize: 13 }}>Password</strong>
+          <p className="hint">
+            Visitors type this once on each device to read your blog. It keeps casual visitors
+            out, not determined ones. Search engines are always asked not to list your blog.
+          </p>
+          <div className="row-split">
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) =>
+                e.key === 'Enter' && password.trim() && !passwordBusy && savePassword(password)
+              }
+              placeholder="No password: anyone with the address can read it"
+              spellCheck={false}
+            />
+            <button
+              className="primary"
+              style={{ flex: '0 0 120px' }}
+              onClick={() => savePassword(password)}
+              disabled={
+                !password.trim() || password.trim() === (config?.sitePassword ?? '') || passwordBusy
+              }
+            >
+              {passwordBusy ? <span className="spinner" /> : 'Set password'}
+            </button>
+          </div>
+          {config?.sitePassword && (
+            <button
+              className="ghost"
+              style={{ marginTop: 8 }}
+              onClick={() => savePassword('')}
+              disabled={passwordBusy}
+            >
+              Remove password
+            </button>
+          )}
+          {passwordMsg && <p className="hint">{passwordMsg}</p>}
         </div>
 
         <div className="card">
