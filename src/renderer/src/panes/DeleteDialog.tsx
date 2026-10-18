@@ -33,13 +33,8 @@ export function DeleteDialog({
             : 'It goes out of this app. This cannot be undone.'}
         </p>
         {mediaCount > 0 && (
-          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 14 }}>
-            <input
-              type="checkbox"
-              checked={media}
-              onChange={(e) => setMedia(e.target.checked)}
-              style={{ width: 'auto', marginTop: 3 }}
-            />
+          <label className="check">
+            <input type="checkbox" checked={media} onChange={(e) => setMedia(e.target.checked)} />
             <span>
               Also delete its {mediaCount} {mediaCount === 1 ? 'photo or video' : 'photos and videos'}{' '}
               from your blog
