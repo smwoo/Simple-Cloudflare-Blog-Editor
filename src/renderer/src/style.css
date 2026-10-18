@@ -24,6 +24,10 @@ input,textarea,select{font:inherit;color:var(--fg);background:var(--bg);
 input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
 label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:5px;
       text-transform:uppercase;letter-spacing:.04em}
+/* A checkbox and its sentence, not a field heading. */
+label.check{display:flex;gap:8px;align-items:flex-start;font-size:14px;font-weight:400;color:var(--fg);
+      text-transform:none;letter-spacing:normal;margin:14px 0 0}
+label.check input{width:auto;margin-top:3px}
 .field{margin-bottom:16px}
 .hint{color:var(--muted);font-size:12.5px;margin-top:5px}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;

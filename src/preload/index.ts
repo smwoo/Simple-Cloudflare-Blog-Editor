@@ -35,6 +35,8 @@ const api = {
   saveDraft: (post: any) => invoke<any>('posts:saveDraft', post),
   deletePost: (slug: string) => invoke<any>('posts:delete', slug),
   publish: (post: any) => invoke<any>('posts:publish', post),
+  unpublish: (post: any) => invoke<any>('posts:unpublish', post),
+  removePost: (slug: string, media: boolean) => invoke<any>('posts:remove', { slug, media }),
   onPublishProgress: (fn: (p: any) => void) => on('publish:progress', fn),
 
   // media
