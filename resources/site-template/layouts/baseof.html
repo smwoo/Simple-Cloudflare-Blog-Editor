@@ -12,12 +12,14 @@
 {{ with .Params.cover }}{{ with .image }}<meta property="og:image" content="{{ . | absURL }}">{{ end }}{{ end }}
 {{ with site.Home.OutputFormats.Get "rss" }}<link rel="alternate" type="application/rss+xml" href="{{ .Permalink }}">{{ end }}
 {{ partialCached "style.html" . }}
+{{ partialCached "theme-head.html" . }}
 {{ partialCached "veil-head.html" . }}
 </head>
 <body>
 {{ partialCached "veil-form.html" . }}
 <header class="site">
   <a class="brand" href="{{ "/" | relURL }}">{{ site.Title }}</a>
+  {{ partialCached "theme-toggle.html" . }}
 </header>
 <main>{{ block "main" . }}{{ end }}</main>
 <footer class="site">
