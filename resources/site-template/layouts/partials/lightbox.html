@@ -1,4 +1,4 @@
-<div id="lb"><button class="prev" aria-label="Previous">‹</button><img alt=""><button class="next" aria-label="Next">›</button></div>
+<div id="lb"><button class="close" aria-label="Close">×</button><button class="prev" aria-label="Previous">‹</button><img alt=""><button class="next" aria-label="Next">›</button></div>
 <script>
 (function(){
   var links=[].slice.call(document.querySelectorAll('a.lb'));
@@ -8,6 +8,7 @@
   function hide(){box.classList.remove('on');img.src=''}
   links.forEach(function(a,n){a.addEventListener('click',function(e){e.preventDefault();show(n)})});
   box.addEventListener('click',function(e){if(e.target===box||e.target===img)hide()});
+  box.querySelector('.close').addEventListener('click',function(e){e.stopPropagation();hide()});
   box.querySelector('.prev').addEventListener('click',function(e){e.stopPropagation();show(i-1)});
   box.querySelector('.next').addEventListener('click',function(e){e.stopPropagation();show(i+1)});
   document.addEventListener('keydown',function(e){
