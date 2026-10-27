@@ -33,6 +33,19 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
   const [password, setPassword] = useState<string>(initialConfig?.sitePassword ?? '')
   const [passwordBusy, setPasswordBusy] = useState(false)
   const [passwordMsg, setPasswordMsg] = useState<string | null>(null)
+  const [sync, setSync] = useState<any>(null)
+  const [syncBusy, setSyncBusy] = useState(false)
+
+  useEffect(() => {
+    window.api.syncStatus().then(setSync)
+    return window.api.onSyncStatus(setSync)
+  }, [])
+
+  const syncNow = async () => {
+    setSyncBusy(true)
+    setSync(sync?.shared ? await window.api.syncNow() : await window.api.retryMigration())
+    setSyncBusy(false)
+  }
 
   const loadDomains = async () => {
     setDomains(await window.api.listDomains())
@@ -143,11 +156,41 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
             <p className="hint">
               {stats.count} photos · {mb(stats.bytesOutput)} published · {mb(stats.bytesOriginal)} originals
               kept on this computer
+              {stats.remote > 0 && <> · {stats.remote} added on your other computers, shown from your blog</>}
             </p>
           )}
           <button className="ghost" onClick={() => window.api.reveal('originals')}>
             Show originals folder
           </button>
+        </div>
+
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong style={{ fontSize: 13 }}>Other computers</strong>
+            <button className="ghost" onClick={syncNow} disabled={syncBusy || sync?.migration?.state === 'running'}>
+              {syncBusy ? <span className="spinner" /> : sync?.shared ? 'Check for changes' : 'Check again'}
+            </button>
+          </div>
+          {sync?.shared ? (
+            <>
+              <div className="perm ok" style={{ marginTop: 8 }}>
+                <span>✓</span>
+                <span>Ready to use on another computer</span>
+              </div>
+              <p className="hint">
+                On the other computer, install Blog Editor and choose <strong>Connect to my blog</strong>.
+                This one is called <strong>{sync.machineName}</strong>.
+                {sync.others?.length > 0 && <> Also open now on {sync.others.join(', ')}.</>}
+                {sync.offline && <> Offline: {sync.pending} change{sync.pending === 1 ? '' : 's'} will be shared when you reconnect.</>}
+              </p>
+            </>
+          ) : (
+            <p className="hint">
+              {sync?.migration?.state === 'needs-permission'
+                ? 'Add the "D1 — Edit" permission to your Cloudflare token, then press Check again.'
+                : (sync?.migration?.message ?? 'Not ready for other computers yet.')}
+            </p>
+          )}
         </div>
 
         <div className="card">

@@ -64,7 +64,8 @@ You need:
 Then the app walks you through three steps:
 
 1. **Cloudflare permission.** Click **Open Cloudflare API tokens**, create a token
-   with the permissions the app lists, set it to never expire, and paste it into
+   with the permissions the app lists (including **D1 — Edit**, which lets the
+   blog be used from other computers), set it to never expire, and paste it into
    the app. Press **Check**: every permission should get a green tick.
 2. **Photo storage keys.** Click **Open R2 API tokens**, create a token with
    **Object Read & Write**, and paste the **Access Key ID** and **Secret Access
@@ -89,9 +90,21 @@ When it finishes, your blog is live at an address like
 - **Your own web address.** If you own a domain at Cloudflare (or buy one there),
   open **Settings** (the gear icon) → **Web addresses** and add it, for example
   `alice.com` or `blog.alice.com`.
-- **Where your work is kept.** Posts and original photos live on this computer,
-  and the app also keeps a copy of your posts in your Cloudflare storage.
-  Each computer is set up as its own blog.
+- **Where your work is kept.** Your posts and photo list are kept in your own
+  Cloudflare account, so they are safe if this computer is lost. Original photos
+  stay on the computer you added them from; the blog only ever holds the
+  web-ready versions.
+- **Using another computer.** Install the app there and choose **Connect to my
+  blog**. It asks only for a Cloudflare token — the one you used before, or a
+  new one with the same permissions — and finds your blog by itself. Nothing on
+  the blog changes. Photos added on the first computer show straight from your
+  blog, so nothing big is downloaded. Changes on either computer appear on the
+  other; if the same post is changed on both at once, both versions are kept.
+- **Updating from an older version.** Blogs set up before version 0.2 need the
+  **D1 — Edit** permission added to their Cloudflare token (Cloudflare → My
+  Profile → API Tokens → Edit). The app asks for it, then gets the blog ready
+  for other computers by itself. Do this on the computer that has the blog
+  before connecting a second one.
 - **If something goes wrong,** open **Settings** → **Copy report**, and send the
   text to whoever helped you set up. It contains no passwords or keys.
 - **Uninstalling** the app does not take your blog offline. It keeps running on

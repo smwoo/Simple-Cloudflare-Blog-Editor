@@ -188,11 +188,27 @@ function VideoView({ node, updateAttributes, deleteNode, selected }: NodeViewPro
   const key: string = node.attrs.key
   const { asset } = useAsset(key)
   const ready = asset && asset.state !== 'converting'
+  // A video from another computer has no H.264 copy here, and Windows often
+  // cannot decode the HEVC web file itself. It still plays on the blog.
+  const [unplayable, setUnplayable] = useState(false)
 
   return (
     <NodeViewWrapper className={`node ${selected ? 'sel' : ''}`}>
-      {ready ? (
-        <video controls preload="metadata" poster={posterUrl(key)} src={playbackUrl(key)} />
+      {ready && unplayable ? (
+        <div className="ph" style={{ aspectRatio: '16/9', flexDirection: 'column', gap: 8 }}>
+          <span>This video can't play on this computer. It plays on your blog.</span>
+          <button className="ghost" onClick={() => window.api.openPostOnBlog(asset!.postSlug)}>
+            Open on the blog ↗
+          </button>
+        </div>
+      ) : ready ? (
+        <video
+          controls
+          preload="metadata"
+          poster={posterUrl(key)}
+          src={playbackUrl(key)}
+          onError={() => asset?.originalAvailable === false && setUnplayable(true)}
+        />
       ) : (
         <div className="ph" style={{ aspectRatio: '16/9' }}>
           <Pending keyName={key} />

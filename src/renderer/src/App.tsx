@@ -37,6 +37,9 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [previewOrigin, setPreviewOrigin] = useState<string | null>(null)
+  const [sync, setSync] = useState<any>(null)
+  /** Bumped when another computer's version replaces the open post, to reload the editor. */
+  const [reloads, setReloads] = useState(0)
   const assets = useAssets()
 
   // ---------------------------------------------------------------- boot
@@ -70,6 +73,28 @@ export function App() {
 
   useEffect(() => window.api.onPublishProgress((p) => setPublishing(publishLabel(p))), [])
 
+  // ---------------------------------------------------------------- sharing
+
+  useEffect(() => {
+    window.api.syncStatus().then(setSync)
+    return window.api.onSyncStatus(setSync)
+  }, [])
+
+  useEffect(
+    () =>
+      window.api.onSyncConflict((conflicts) => {
+        const c = conflicts[0]
+        setBanner({
+          kind: 'warn',
+          text:
+            `A post was also changed on ${c.machineName}. Both versions are kept: the one from ` +
+            `${c.machineName} is the draft "(from ${c.machineName})" in your list.`,
+        })
+        refresh()
+      }),
+    [refresh],
+  )
+
   // ---------------------------------------------------------------- autosave
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -85,10 +110,32 @@ export function App() {
       // Drafts are mirrored off-machine too: an unpublished post otherwise
       // exists in exactly one place, and a dead laptop takes it along.
       await window.api.saveDraft(post)
+      saveTimer.current = null
       setSaveState('saved')
       setTimeout(() => setSaveState('idle'), 1600)
     }, 1200)
   }, [])
+
+  useEffect(
+    () =>
+      window.api.onSyncChanged(async ({ posts: changed }) => {
+        const list = await refresh()
+        const open = latest.current
+        if (!open || !changed.includes(open.slug)) return
+        // Mid-edit: keep the writer's text. Their save is checked against the
+        // version they started from, so the other version is kept as a copy.
+        if (saveTimer.current) return
+        const fresh = list.find((p) => p.slug === open.slug)
+        if (!fresh) {
+          setCurrent(list[0] ?? null)
+          setBanner({ kind: 'warn', text: 'The post you had open was deleted on another computer.' })
+          return
+        }
+        setCurrent(await window.api.readPost(open.slug))
+        setReloads((n) => n + 1)
+      }),
+    [refresh],
+  )
 
   const patchPost = (patch: Partial<Post> | ((p: Post) => Partial<Post>)) => {
     setCurrent((prev) => {
@@ -144,7 +191,8 @@ export function App() {
     const slug = slugFor(post.frontMatter.title, post.frontMatter.date)
     if (slug === post.slug) return post
     await window.api.deletePost(post.slug)
-    const next = { ...post, slug }
+    // A new name is a new post as far as other computers are concerned.
+    const next = { ...post, slug, syncVersion: undefined }
     setCurrent(next)
     latest.current = next
     await window.api.saveDraft(next)
@@ -367,6 +415,8 @@ export function App() {
               </div>
             </div>
 
+            <SyncBanner sync={sync} onRetry={async () => setSync(await window.api.retryMigration())} />
+
             {banner && (
               <div style={{ padding: '10px 40px 0' }}>
                 <div className={`banner ${banner.kind}`}>
@@ -397,7 +447,7 @@ export function App() {
             )}
 
             <Editor
-              key={current.slug}
+              key={`${current.slug}:${reloads}`}
               post={current}
               onChange={(doc) => patchPost({ doc })}
               onEditorReady={setEditor}
@@ -406,7 +456,15 @@ export function App() {
 
             <div className="statusbar">
               <span>
-                {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : ''}
+                {saveState === 'saving'
+                  ? 'Saving…'
+                  : saveState === 'saved'
+                    ? sync?.shared && sync.offline
+                      ? 'Saved on this computer'
+                      : 'Saved'
+                    : sync?.shared && sync.offline && sync.pending > 0
+                      ? 'Offline — changes will be shared when you reconnect'
+                      : ''}
               </span>
               <span className="grow" />
               {pendingCount > 0 && (
@@ -458,6 +516,61 @@ export function App() {
         />
       )}
       {showSettings && <Settings config={config} onClose={() => setShowSettings(false)} />}
+    </div>
+  )
+}
+
+/**
+ * The one thing about sharing the owner needs to see, if anything: another
+ * computer has the blog open, or this blog still needs a permission to be
+ * usable elsewhere.
+ */
+function SyncBanner({ sync, onRetry }: { sync: any; onRetry: () => void }) {
+  if (!sync) return null
+  let body: React.ReactNode = null
+  let kind = 'warn'
+  if (sync.migration?.state === 'needs-permission') {
+    body = (
+      <>
+        To use your blog on another computer, add the <strong>D1 — Edit</strong> permission to your
+        Cloudflare token (Cloudflare → My Profile → API Tokens → Edit), then{' '}
+        <button className="ghost" style={{ fontSize: 12, padding: '1px 6px' }} onClick={onRetry}>
+          check again
+        </button>
+        . Until then everything works on this computer as before.
+      </>
+    )
+  } else if (sync.migration?.state === 'running') {
+    kind = 'ok'
+    body = (
+      <>
+        <span className="spinner" style={{ verticalAlign: -2, marginRight: 6 }} />
+        {sync.migration.message ?? 'Getting your blog ready for other computers…'}
+      </>
+    )
+  } else if (sync.migration?.state === 'failed') {
+    body = (
+      <>
+        {sync.migration.message}{' '}
+        <button className="ghost" style={{ fontSize: 12, padding: '1px 6px' }} onClick={onRetry}>
+          Try again
+        </button>
+      </>
+    )
+  } else if (sync.others?.length) {
+    body = (
+      <>
+        Your blog is also open on <strong>{sync.others.join(' and ')}</strong>. Editing the same post on
+        both at once keeps both versions.
+      </>
+    )
+  }
+  if (!body) return null
+  return (
+    <div style={{ padding: '10px 40px 0' }}>
+      <div className={`banner ${kind}`} style={{ marginBottom: 0 }}>
+        {body}
+      </div>
     </div>
   )
 }

@@ -49,6 +49,10 @@ import {
 import { referencedKeys } from '../shared/markdown.js'
 import { posterKey, type Post, type BlogConfig, type Asset, type Secrets } from '../shared/types.js'
 
+// A separate data folder: a smoke run that must not touch the real blog, or
+// a second "computer" on the same machine when trying out sharing.
+if (process.env.BLOG_EDITOR_USER_DATA) app.setPath('userData', process.env.BLOG_EDITOR_USER_DATA)
+
 // ---------------------------------------------------------------- state
 
 let win: BrowserWindow | null = null
@@ -840,6 +844,10 @@ function registerIpc() {
   // ---- misc
   ipcMain.handle('update:state', async () => updateState())
   ipcMain.handle('shell:open', async (_e, url: string) => shell.openExternal(url))
+  ipcMain.handle('shell:openPost', async (_e, slug: string) => {
+    const origin = siteOrigin()
+    if (origin) await shell.openExternal(`${origin}/posts/${encodeURIComponent(slug)}/`)
+  })
   ipcMain.handle('shell:reveal', async (_e, which: 'originals' | 'site') => {
     shell.openPath(which === 'originals' ? store.paths().originals : store.paths().site)
   })

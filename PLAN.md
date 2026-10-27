@@ -9,7 +9,7 @@ Each user owns and pays for their own infrastructure. The app is a tool, not a
 hosted platform — it holds nothing on their behalf and runs no server.
 
 Companion docs: [CODE-SIGNING.md](./CODE-SIGNING.md),
-[MULTI-MACHINE.md](./MULTI-MACHINE.md) (one blog from several computers; planned).
+[MULTI-MACHINE.md](./MULTI-MACHINE.md) (one blog from several computers).
 
 Reference material throughout comes from an existing Hugo blog with a hand-rolled
 media pipeline (`convert-media.sh`, `upload-r2.sh`) and about 1.3 GB of published
@@ -551,7 +551,7 @@ Publish →  write the post locally
        →  "Published — view your post"
 ```
 
-> **Superseded (planned):** the `_source/` backup below gives way to a D1 database
+> **Superseded:** the `_source/` backup below gives way to a D1 database
 > shared between computers. See [MULTI-MACHINE.md](./MULTI-MACHINE.md).
 
 **Backup replaces git.** Without a repository there is no version history, and

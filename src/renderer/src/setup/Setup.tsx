@@ -9,6 +9,8 @@
  */
 import React, { useEffect, useState } from 'react'
 import type { TokenCheck } from '../../../shared/types.js'
+import { Connect } from './Connect.js'
+import { PERMISSIONS, TOKEN_URL, R2_TOKEN_HELP } from './permissions.js'
 
 interface Step {
   id: string
@@ -18,17 +20,41 @@ interface Step {
   remedy?: string
 }
 
-const TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens'
-const R2_TOKEN_HELP = 'https://dash.cloudflare.com/?to=/:account/r2/api-tokens'
 
-const PERMISSIONS = [
-  ['Account', 'Account Settings', 'Read'],
-  ['Account', 'Workers R2 Storage', 'Edit'],
-  ['Account', 'Workers Scripts', 'Edit'],
-  ['Zone (optional)', 'Zone', 'Read'],
-]
-
+/** First run: a new blog, or this computer joining one that exists. */
 export function Setup({ onDone }: { onDone: () => void }) {
+  const [mode, setMode] = useState<'choose' | 'new' | 'connect'>('choose')
+
+  if (mode === 'new') return <NewBlog onDone={onDone} onConnect={() => setMode('connect')} />
+  if (mode === 'connect') return <Connect onDone={onDone} onBack={() => setMode('choose')} />
+
+  return (
+    <div className="setup-scroll"><div className="setup">
+      <h1>Blog Editor</h1>
+      <p className="lede">Is this a new blog, or one you already write on another computer?</p>
+      <div className="card">
+        <h3 style={{ margin: '0 0 4px', fontSize: 15 }}>I already have a blog</h3>
+        <p className="hint" style={{ marginBottom: 14 }}>
+          Carry on with it on this computer. Your posts and photos come with it, and nothing on your blog
+          changes. Takes a couple of minutes.
+        </p>
+        <button className="primary" onClick={() => setMode('connect')}>
+          Connect to my blog
+        </button>
+      </div>
+      <div className="card">
+        <h3 style={{ margin: '0 0 4px', fontSize: 15 }}>Set up a new blog</h3>
+        <p className="hint" style={{ marginBottom: 14 }}>
+          Creates a brand new blog in a Cloudflare account. About ten minutes, best done with whoever is
+          helping.
+        </p>
+        <button onClick={() => setMode('new')}>Set up a new blog</button>
+      </div>
+    </div></div>
+  )
+}
+
+function NewBlog({ onDone, onConnect }: { onDone: () => void; onConnect: () => void }) {
   const [token, setToken] = useState('')
   const [check, setCheck] = useState<TokenCheck | null>(null)
   const [checking, setChecking] = useState(false)
@@ -43,6 +69,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const [steps, setSteps] = useState<Step[]>([])
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [existing, setExisting] = useState(false)
   const [done, setDone] = useState(false)
 
   useEffect(() => window.api.onSetupProgress((s) => setSteps(s)), [])
@@ -77,7 +104,9 @@ export function Setup({ onDone }: { onDone: () => void }) {
       author: author.trim() || title.trim(),
     })
     setRunning(false)
+    setExisting(!!res.existingBlog)
     if (res.ok) setDone(true)
+    else if (res.existingBlog) setError(null)
     else setError(res.error ?? 'Setup did not finish.')
   }
 
@@ -231,6 +260,12 @@ export function Setup({ onDone }: { onDone: () => void }) {
       </div>
 
       {error && <div className="banner err">{error}</div>}
+      {existing && (
+        <div className="banner warn">
+          A blog called <strong>{slug}</strong> already exists in this Cloudflare account, so nothing was
+          changed. <button className="primary" style={{ marginLeft: 8 }} onClick={onConnect}>Connect to it instead</button>
+        </div>
+      )}
 
       <button className="primary" onClick={provision} disabled={!canProvision || running}>
         {running ? 'Setting up…' : 'Set up the blog'}

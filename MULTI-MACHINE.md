@@ -1,7 +1,36 @@
 # Using one blog from several computers
 
-Status: **planned, not built.** Target release v0.2.0. Companion to
-[PLAN.md](./PLAN.md); this replaces the `_source/` backup design in §6 there.
+Status: **built, not yet run against a live Cloudflare account.** Target
+release v0.2.0. Companion to [PLAN.md](./PLAN.md); this replaces the `_source/`
+backup design in §6 there.
+
+Where it lives: `src/main/cloudflare/d1.ts` (REST client), `src/main/sync/`
+(schema, typed queries, the sync engine, migration, connect and recovery),
+`src/renderer/src/setup/Connect.tsx`. Tests in `src/main/sync/__tests__` run
+the real SQL on `node:sqlite` against fake accounts and buckets.
+
+Deviations from the design below:
+
+- Posts are stored as the whole markdown file (`markdown`), plus `title`,
+  `date` and `draft` columns for listing, rather than front matter and body
+  apart. Files are shared byte for byte, with no parse round trip.
+- Version snapshots are kept at most every ten minutes per post, not on every
+  autosave, so the last 20 cover real history rather than the last minute.
+- On a conflict the computer that is typing keeps the slug; the other version
+  becomes a draft copy, "Title (from Alice's MacBook)".
+- Editing a post that another computer deleted brings it back rather than
+  losing the writing.
+- Timestamps come from the database clock, so a computer with the wrong time
+  cannot hide its changes from the others.
+- `BLOG_EDITOR_USER_DATA=<dir>` runs the app on a separate data folder: for
+  smoke runs, and for trying sharing with two "computers" on one machine.
+
+Not covered yet:
+
+- The Worker ignores `Range`, so a video shown from the blog plays without
+  seeking until it has loaded. The live site has the same limitation; Safari
+  is stricter about it than Chromium.
+- No UI for renaming this computer or for browsing `post_versions`.
 
 Today the blog is locked to the computer that set it up. The goal: install the
 app on any computer, connect it to the existing blog, and carry on — same posts,

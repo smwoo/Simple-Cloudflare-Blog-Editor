@@ -87,16 +87,19 @@ export function useAsset(key: string): { asset?: Asset; fraction?: number } {
 
 // ---------------------------------------------------------------- urls
 
-const base = (key: string) => key.split('/').pop()!
+const path = (key: string) => key.split('/').map(encodeURIComponent).join('/')
 
-/** The converted web file, straight from disk — works before any upload. */
+/**
+ * The converted web file: from disk when this computer made it, which works
+ * before any upload, and from the blog when another computer did.
+ */
 export function outputUrl(key: string): string {
-  return `blogmedia://output/${key.split('/').map(encodeURIComponent).join('/')}`
+  return `blogmedia://output/${path(key)}`
 }
 
 /** Thumbnail (images) or poster frame (video). */
 export function posterUrl(key: string): string {
-  return `blogmedia://cache/${encodeURIComponent(`${base(key)}.poster.jpg`)}`
+  return `blogmedia://poster/${path(key)}`
 }
 
 /**
@@ -108,5 +111,5 @@ export function posterUrl(key: string): string {
  * concludes it is broken — while it plays perfectly on the published site.
  */
 export function playbackUrl(key: string): string {
-  return `blogmedia://cache/${encodeURIComponent(`${base(key)}.preview.mp4`)}`
+  return `blogmedia://play/${path(key)}`
 }

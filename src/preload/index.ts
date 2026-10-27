@@ -83,6 +83,7 @@ const api = {
 
   // misc
   openExternal: (url: string) => invoke<void>('shell:open', url),
+  openPostOnBlog: (slug: string) => invoke<void>('shell:openPost', slug),
   reveal: (which: 'originals' | 'site') => invoke<void>('shell:reveal', which),
   buildReport: () => invoke<string>('report:build'),
   updateState: () => invoke<any>('update:state'),
