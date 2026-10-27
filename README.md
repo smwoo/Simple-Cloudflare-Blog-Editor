@@ -79,8 +79,10 @@ When it finishes, your blog is live at an address like
 ## Writing posts
 
 - **New post** starts a post. It saves automatically as you type.
-- **Photos and videos:** drag them onto the post or onto the **Photos** panel on
-  the right. Several photos together become a gallery. The app prepares them for
+- **Photos and videos:** drag them onto the post to place them there, or onto the
+  **Photos** panel on the right to keep them for later — select them there and
+  press **Insert** when you want them in the post. Several photos together
+  become a gallery. The app prepares them for
   the web automatically; your originals are kept untouched on your computer.
 - **Preview** shows the post as it will look online.
 - **Publish** puts the post on your blog. **Update** republishes changes.

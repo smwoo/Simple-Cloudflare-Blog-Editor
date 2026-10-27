@@ -29,7 +29,7 @@ export function App() {
   const [posts, setPosts] = useState<Post[]>([])
   const [current, setCurrent] = useState<Post | null>(null)
   const [editor, setEditor] = useState<TipTapEditor | null>(null)
-  const [pendingFiles, setPendingFiles] = useState<string[] | null>(null)
+  const [pendingFiles, setPendingFiles] = useState<{ files: string[]; place: boolean } | null>(null)
   const [pendingCount, setPendingCount] = useState(0)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
   const [publishing, setPublishing] = useState<string | null>(null)
@@ -160,11 +160,14 @@ export function App() {
     setPosts((p) => [post, ...p])
   }
 
-  /** Files arrived — ask the one question, then ingest. */
-  const onAddFiles = (files: string[]) => setPendingFiles(files)
+  /**
+   * Files arrived — ask the one question, then ingest. `place` puts them in the
+   * post too; files added through the library stay there until inserted.
+   */
+  const onAddFiles = (files: string[], place = false) => setPendingFiles({ files, place })
 
   const ingest = async (group: string) => {
-    const files = pendingFiles ?? []
+    const { files, place } = pendingFiles ?? { files: [], place: false }
     setPendingFiles(null)
     if (!current || !files.length) return
 
@@ -178,7 +181,7 @@ export function App() {
     setPendingCount((n) => n + keys.length)
     assetStore.replaceAll(await window.api.listMedia())
 
-    if (keys.length && editor) appendToGalleryOrInsert(editor, keys)
+    if (place && keys.length && editor) appendToGalleryOrInsert(editor, keys)
     if (rejected.length) {
       setBanner({
         kind: 'warn',
@@ -451,7 +454,7 @@ export function App() {
               post={current}
               onChange={(doc) => patchPost({ doc })}
               onEditorReady={setEditor}
-              onFilesDropped={(files) => onAddFiles(files)}
+              onFilesDropped={(files) => onAddFiles(files, true)}
             />
 
             <div className="statusbar">
@@ -500,7 +503,7 @@ export function App() {
 
       {pendingFiles && (
         <GroupDialog
-          count={pendingFiles.length}
+          count={pendingFiles.files.length}
           suggestions={groupSuggestions}
           onConfirm={ingest}
           onCancel={() => setPendingFiles(null)}
