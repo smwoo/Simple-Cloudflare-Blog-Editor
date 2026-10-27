@@ -7,10 +7,13 @@ import { GroupDialog } from './panes/GroupDialog.js'
 import { Settings } from './panes/Settings.js'
 import { DeleteDialog } from './panes/DeleteDialog.js'
 import { assetStore, useAssets } from './editor/assetStore.js'
-import { appendToGalleryOrInsert, insertAssets } from './editor/insert.js'
+import { appendToGallery, insertAssets } from './editor/insert.js'
 import type { Post, PMNode, BlogConfig, Asset } from '../../shared/types.js'
 
 const EMPTY_DOC: PMNode = { type: 'doc', content: [{ type: 'paragraph' }] }
+
+/** Where newly added files go besides the library. */
+type AddTarget = 'library' | 'post' | { gallery: number }
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
@@ -29,7 +32,7 @@ export function App() {
   const [posts, setPosts] = useState<Post[]>([])
   const [current, setCurrent] = useState<Post | null>(null)
   const [editor, setEditor] = useState<TipTapEditor | null>(null)
-  const [pendingFiles, setPendingFiles] = useState<{ files: string[]; place: boolean } | null>(null)
+  const [pendingFiles, setPendingFiles] = useState<{ files: string[]; into: AddTarget } | null>(null)
   const [pendingCount, setPendingCount] = useState(0)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
   const [publishing, setPublishing] = useState<string | null>(null)
@@ -161,13 +164,20 @@ export function App() {
   }
 
   /**
-   * Files arrived — ask the one question, then ingest. `place` puts them in the
-   * post too; files added through the library stay there until inserted.
+   * Files arrived — ask the one question, then ingest. Files added through the
+   * library stay there until inserted; `into` also places them in the post, or
+   * appends them to the gallery at that position.
    */
-  const onAddFiles = (files: string[], place = false) => setPendingFiles({ files, place })
+  const onAddFiles = (files: string[], into: AddTarget = 'library') =>
+    setPendingFiles({ files, into })
+
+  const addToGallery = async (pos: number) => {
+    const files = await window.api.pickFiles()
+    if (files.length) onAddFiles(files, { gallery: pos })
+  }
 
   const ingest = async (group: string) => {
-    const { files, place } = pendingFiles ?? { files: [], place: false }
+    const { files, into } = pendingFiles ?? { files: [], into: 'library' }
     setPendingFiles(null)
     if (!current || !files.length) return
 
@@ -181,7 +191,10 @@ export function App() {
     setPendingCount((n) => n + keys.length)
     assetStore.replaceAll(await window.api.listMedia())
 
-    if (place && keys.length && editor) appendToGalleryOrInsert(editor, keys)
+    if (keys.length && editor && into !== 'library') {
+      if (into === 'post') insertAssets(editor, keys)
+      else appendToGallery(editor, into.gallery, keys)
+    }
     if (rejected.length) {
       setBanner({
         kind: 'warn',
@@ -454,7 +467,8 @@ export function App() {
               post={current}
               onChange={(doc) => patchPost({ doc })}
               onEditorReady={setEditor}
-              onFilesDropped={(files) => onAddFiles(files, true)}
+              onFilesDropped={(files) => onAddFiles(files, 'post')}
+              onAddToGallery={addToGallery}
             />
 
             <div className="statusbar">

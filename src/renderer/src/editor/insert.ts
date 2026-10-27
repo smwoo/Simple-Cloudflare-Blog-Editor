@@ -34,23 +34,32 @@ export function insertAssets(editor: Editor, keys: string[]): void {
   chain.run()
 }
 
-/** Append to the gallery the cursor is in, else insert normally. */
-export function appendToGalleryOrInsert(editor: Editor, keys: string[]): void {
-  const { state } = editor
-  const { $from } = state.selection
-  for (let depth = $from.depth; depth >= 0; depth--) {
-    const node = $from.node(depth)
-    if (node.type.name === 'gallery') {
-      const existing: string[] = node.attrs.keys ?? []
-      editor
-        .chain()
-        .focus()
-        .updateAttributes('gallery', {
-          keys: [...existing, ...keys.filter((k) => !existing.includes(k))],
-        })
-        .run()
-      return
-    }
+/**
+ * Append images to the gallery at `pos`; videos go in just after it, since a
+ * gallery only holds photos. Falls back to a normal insert if the gallery has
+ * gone. Galleries are atoms, so the cursor is never inside one — the position
+ * has to come from the gallery itself.
+ */
+export function appendToGallery(editor: Editor, pos: number, keys: string[]): void {
+  const node = editor.state.doc.nodeAt(pos)
+  if (node?.type.name !== 'gallery') return insertAssets(editor, keys)
+
+  const existing: string[] = node.attrs.keys ?? []
+  const videos = keys.filter((k) => assetStore.get(k)?.kind === 'video')
+  const images = keys.filter((k) => !videos.includes(k) && !existing.includes(k))
+
+  const chain = editor
+    .chain()
+    .focus()
+    .command(({ tr }) => {
+      tr.setNodeMarkup(pos, undefined, { ...node.attrs, keys: [...existing, ...images] })
+      return true
+    })
+  if (videos.length) {
+    chain.insertContentAt(
+      pos + node.nodeSize,
+      videos.map((key) => ({ type: 'video', attrs: { key, caption: null } })),
+    )
   }
-  insertAssets(editor, keys)
+  chain.run()
 }

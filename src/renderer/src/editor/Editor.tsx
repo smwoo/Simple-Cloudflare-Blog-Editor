@@ -17,25 +17,31 @@ interface Props {
   onEditorReady: (editor: TipTapEditor) => void
   /** Called when files are dropped onto the document, with the drop position. */
   onFilesDropped: (files: string[], insertAt: number | null) => void
+  /** "+ add" on the gallery at `pos`. */
+  onAddToGallery: (pos: number) => void
 }
 
-const EXTENSIONS = [
-  StarterKit.configure({
-    heading: { levels: [2, 3, 4] },
-    // The app's own nodes replace these entirely.
-    codeBlock: {},
-    link: { openOnClick: false, autolink: true },
-  }),
-  Gallery,
-  Video,
-  Figure,
-]
+const STARTER = StarterKit.configure({
+  heading: { levels: [2, 3, 4] },
+  // The app's own nodes replace these entirely.
+  codeBlock: {},
+  link: { openOnClick: false, autolink: true },
+})
 
-export function Editor({ post, onChange, onEditorReady, onFilesDropped }: Props) {
+export function Editor({ post, onChange, onEditorReady, onFilesDropped, onAddToGallery }: Props) {
   const slug = post.slug
+  // The editor is built once per post; read the handler through a ref so it
+  // never goes stale.
+  const addToGallery = useRef(onAddToGallery)
+  addToGallery.current = onAddToGallery
   const editor = useEditor(
     {
-      extensions: EXTENSIONS,
+      extensions: [
+        STARTER,
+        Gallery.configure({ onAdd: (pos) => addToGallery.current(pos) }),
+        Video,
+        Figure,
+      ],
       content: post.doc,
       editorProps: {
         attributes: { spellcheck: 'true' },

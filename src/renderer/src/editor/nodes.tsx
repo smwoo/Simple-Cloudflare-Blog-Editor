@@ -81,7 +81,14 @@ function CaptionField({
 
 // ---------------------------------------------------------------- gallery
 
-function GalleryView({ node, updateAttributes, deleteNode, selected, editor }: NodeViewProps) {
+function GalleryView({
+  node,
+  updateAttributes,
+  deleteNode,
+  selected,
+  extension,
+  getPos,
+}: NodeViewProps) {
   const keys: string[] = node.attrs.keys ?? []
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [over, setOver] = useState<number | null>(null)
@@ -151,7 +158,10 @@ function GalleryView({ node, updateAttributes, deleteNode, selected, editor }: N
         ))}
         <div
           className="drop"
-          onClick={() => editor.commands.requestMedia?.({ target: 'gallery' })}
+          onClick={() => {
+            const pos = getPos()
+            if (typeof pos === 'number') (extension.options as GalleryOptions).onAdd?.(pos)
+          }}
           title="Add more photos"
         >
           + add
@@ -171,12 +181,21 @@ function GalleryView({ node, updateAttributes, deleteNode, selected, editor }: N
   )
 }
 
-export const Gallery = Node.create({
+export interface GalleryOptions {
+  /** "+ add" was clicked on the gallery at `pos`; the app picks files for it. */
+  onAdd: ((pos: number) => void) | null
+}
+
+export const Gallery = Node.create<GalleryOptions>({
   name: 'gallery',
   group: 'block',
   atom: true,
   draggable: true,
   selectable: true,
+
+  addOptions() {
+    return { onAdd: null }
+  },
 
   addAttributes() {
     return {
@@ -327,11 +346,3 @@ export const Figure = Node.create({
     return ReactNodeViewRenderer(FigureView)
   },
 })
-
-declare module '@tiptap/core' {
-  interface Commands<ReturnType> {
-    mediaRequest: {
-      requestMedia: (opts: { target: 'gallery' | 'cursor' }) => ReturnType
-    }
-  }
-}
