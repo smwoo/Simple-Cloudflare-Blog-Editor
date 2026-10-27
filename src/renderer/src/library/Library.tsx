@@ -14,11 +14,33 @@ interface Props {
 
 type Scope = 'post' | 'all'
 
+const COLLAPSED_KEY = 'library.collapsed'
+
+/** Group labels the user has folded away, kept across restarts. */
+function useCollapsed() {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]'))
+    } catch {
+      return new Set()
+    }
+  })
+  const toggle = (label: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(label)) next.add(label)
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]))
+      return next
+    })
+  return [collapsed, toggle] as const
+}
+
 export function Library({ postSlug, editor, onAddFiles, pendingCount }: Props) {
   const assets = useAssets()
   const [scope, setScope] = useState<Scope>('post')
   const [selected, setSelected] = useState<string[]>([])
   const [over, setOver] = useState(false)
+  const [collapsed, toggleGroup] = useCollapsed()
 
   const visible = useMemo(
     () => (scope === 'post' ? assets.filter((a) => a.postSlug === postSlug) : assets),
@@ -109,22 +131,31 @@ export function Library({ postSlug, editor, onAddFiles, pendingCount }: Props) {
           </div>
         )}
 
-        {groups.map(([label, items]) => (
-          <div key={label}>
-            <div className="group-head">{label || 'photos'}</div>
-            <div className="lib-grid">
-              {items.map((a) => (
-                <Tile
-                  key={a.key}
-                  asset={a}
-                  selected={selected.includes(a.key)}
-                  onToggle={(additive) => toggle(a.key, additive)}
-                  selection={selected.includes(a.key) ? selected : [a.key]}
-                />
-              ))}
+        {groups.map(([label, items]) => {
+          const open = !collapsed.has(label)
+          return (
+            <div key={label}>
+              <button className="group-head" aria-expanded={open} onClick={() => toggleGroup(label)}>
+                <span className="chev">{open ? '▾' : '▸'}</span>
+                {label || 'photos'}
+                <span className="count">{items.length}</span>
+              </button>
+              {open && (
+                <div className="lib-grid">
+                  {items.map((a) => (
+                    <Tile
+                      key={a.key}
+                      asset={a}
+                      selected={selected.includes(a.key)}
+                      onToggle={(additive) => toggle(a.key, additive)}
+                      selection={selected.includes(a.key) ? selected : [a.key]}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       <div className="insert-bar">
