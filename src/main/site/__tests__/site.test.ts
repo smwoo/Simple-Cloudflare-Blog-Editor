@@ -142,6 +142,7 @@ describe('hugo build', () => {
     expect(html).toContain('/media/nov-2026/surf/surf-2.avif')
     expect(html).toContain('<video')
     expect(html).toContain('/media/nov-2026/surf/surf-video-1.mp4')
+    expect(html).toContain('poster=/media/nov-2026/surf/surf-video-1.mp4.poster.jpg')
     expect(html).toContain('Sunset')
   })
 

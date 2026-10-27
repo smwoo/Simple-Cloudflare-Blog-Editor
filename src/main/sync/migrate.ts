@@ -14,11 +14,11 @@ import type { R2 } from '../cloudflare/r2.js'
 import type { Library } from '../db/library.js'
 import { listPosts, readPostMarkdown } from '../site/hugo.js'
 import { parsePost } from '../../shared/markdown.js'
-import type { BlogConfig, Secrets } from '../../shared/types.js'
+import { posterKey, type BlogConfig, type Secrets } from '../../shared/types.js'
 import { BlogDb } from './remote.js'
 import { SCHEMA_VERSION } from './schema.js'
 
-export const posterKey = (key: string) => `${key}.poster.jpg`
+export { posterKey }
 
 export interface MigrateResult {
   databaseId: string

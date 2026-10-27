@@ -105,6 +105,11 @@ export function mediaPath(key: string): string {
   return `/media/${key}`
 }
 
+/** Bucket key of a video's poster frame, uploaded beside it. */
+export function posterKey(key: string): string {
+  return `${key}.poster.jpg`
+}
+
 /** Inverse of `mediaPath`. Returns null if the path is not ours. */
 export function keyFromMediaPath(path: string): string | null {
   const m = /^\/media\/(.+)$/.exec(path.trim())

@@ -26,6 +26,8 @@ export interface SyncState {
   lastPull: number
   /** The version of each post this computer last saw or wrote. */
   versions: Record<string, number>
+  /** The version of each post this computer itself last wrote. */
+  own: Record<string, number>
   /** Posts saved here but not yet sent, with the version each edit started from. */
   dirty: Record<string, number | null>
   deleted: string[]
@@ -65,12 +67,22 @@ export function newState(name = friendlyName()): SyncState {
     machineName: name,
     lastPull: 0,
     versions: {},
+    own: {},
     dirty: {},
     deleted: [],
     assets: [],
     removedAssets: [],
     blogUpdatedAt: 0,
   }
+}
+
+/** This computer's identity, created on first use: setup needs it before any blog exists. */
+export async function ensureState(file: string): Promise<SyncState> {
+  const existing = await readState(file)
+  if (existing) return existing
+  const state = newState()
+  await writeFile(file, JSON.stringify(state, null, 2), 'utf8')
+  return state
 }
 
 export async function readState(file: string): Promise<SyncState | null> {
@@ -164,7 +176,15 @@ export class SyncEngine {
   async postSaved(slug: string, baseVersion?: number | null): Promise<void> {
     this.edits.set(slug, (this.edits.get(slug) ?? 0) + 1)
     if (!(slug in this.state.dirty)) {
-      this.state.dirty[slug] = baseVersion ?? this.state.versions[slug] ?? null
+      // The editor does not hear about this computer's own writes, and does
+      // not need to: each was checked when sent, so the editor's text already
+      // includes everything up to the last one. Only a version from
+      // elsewhere, loaded or not, can be newer than both.
+      const own = this.state.own[slug]
+      this.state.dirty[slug] =
+        baseVersion === undefined || baseVersion === null
+          ? (this.state.versions[slug] ?? null)
+          : Math.max(baseVersion, own ?? 0)
     }
     this.state.deleted = this.state.deleted.filter((s) => s !== slug)
     await this.persist()
@@ -214,6 +234,7 @@ export class SyncEngine {
       const res = await db.putPost(write, base, this.machineId)
       if (res.ok) {
         this.state.versions[slug] = res.version
+        this.state.own[slug] = res.version
       } else {
         const conflict = await this.settle(write, res.remote)
         if (conflict) conflicts.push(conflict)
@@ -228,6 +249,7 @@ export class SyncEngine {
     for (const slug of [...this.state.deleted]) {
       await db.deletePost(slug, this.machineId)
       delete this.state.versions[slug]
+      delete this.state.own[slug]
       this.state.deleted = this.state.deleted.filter((s) => s !== slug)
       await this.persist()
     }
@@ -272,9 +294,11 @@ export class SyncEngine {
       const copyMarkdown = serializePost(theirs)
       await writePostMarkdown(this.deps.siteDir, copySlug, copyMarkdown)
       this.state.versions[copySlug] = await this.db.forcePost(toWrite(copySlug, copyMarkdown), this.machineId)
+      this.state.own[copySlug] = this.state.versions[copySlug]
       conflict = { slug: local.slug, copySlug, machineName }
     }
     this.state.versions[local.slug] = await this.db.forcePost(local, this.machineId)
+    this.state.own[local.slug] = this.state.versions[local.slug]
     return conflict
   }
 
@@ -317,6 +341,7 @@ export class SyncEngine {
       if (remote.deletedAt) {
         await deletePost(siteDir, remote.slug)
         delete this.state.versions[remote.slug]
+        delete this.state.own[remote.slug]
       } else {
         await writePostMarkdown(siteDir, remote.slug, remote.markdown)
         this.state.versions[remote.slug] = remote.version
@@ -351,6 +376,7 @@ export class SyncEngine {
   /** Mark everything currently in the database as seen: after connecting or migrating. */
   async adopt(versions: Record<string, number>, blogUpdatedAt: number, at: number): Promise<void> {
     this.state.versions = { ...versions }
+    this.state.own = {}
     this.state.blogUpdatedAt = blogUpdatedAt
     this.state.lastPull = at
     await this.persist()

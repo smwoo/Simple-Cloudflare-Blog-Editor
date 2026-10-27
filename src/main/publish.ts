@@ -1,19 +1,15 @@
 /**
- * Publishing, and the source backup that replaces version control.
+ * Publishing, taking a post back to draft, and deleting one.
  *
- * There is no repository, so the markdown has no history and the owner's
- * machine is the only place a draft exists. `_source/` in their own bucket
- * fixes both: it is kilobytes, it lives in an account they own, and it makes
- * recovery on a new machine a matter of installing the app and signing in.
+ * Posts are shared through the blog's database (see sync/), which the caller
+ * brings up to date first, so these only ever build from a complete set.
  */
-import { readFile, readdir } from 'node:fs/promises'
-import path from 'node:path'
 import { CloudflareClient } from './cloudflare/api.js'
 import { R2 } from './cloudflare/r2.js'
 import { deploySite, waitForLive } from './cloudflare/deploy.js'
 import { build, writePost, readPost, deletePost, listPosts, siteOverlay } from './site/hugo.js'
-import { serializePost, referencedKeys } from '../shared/markdown.js'
-import type { BlogConfig, Post } from '../shared/types.js'
+import { referencedKeys } from '../shared/markdown.js'
+import { posterKey, type BlogConfig, type Post } from '../shared/types.js'
 import type { Library } from './db/library.js'
 import type { MediaQueue } from './media/queue.js'
 
@@ -58,6 +54,18 @@ export async function publish(
   }
   await queue.flushUploads()
 
+  // Placed on another computer and not here yet: it is still being prepared
+  // there, and publishing now would put a broken photo on the page.
+  const unknown = library.missing(keys)
+  if (unknown.length) {
+    return {
+      ok: false,
+      url: postUrl,
+      message: `${unknown.length} photo${unknown.length > 1 ? 's are' : ' is'} still being prepared on another computer. Try again once ${unknown.length > 1 ? 'they have' : 'it has'} finished.`,
+      log: unknown.join('\n'),
+    }
+  }
+
   const stuck = library.pending(keys)
   if (stuck.length) {
     const failed = stuck.filter((a) => a.state === 'failed')
@@ -84,14 +92,7 @@ export async function publish(
     }
   }
 
-  // ---- 3. back up the source before deploying, so a failure later still
-  // leaves the writing safe off-machine.
-  onProgress({ phase: 'uploading', detail: 'backing up' })
-  await backupSource(siteDir, r2).catch(() => {
-    /* backup is best-effort; never block publishing on it */
-  })
-
-  // ---- 4. deploy, and 5. verify against the real URL
+  // ---- 3. deploy, and 4. verify against the real URL
   return deployAndVerify(
     built.publicDir,
     { config, cf },
@@ -125,11 +126,11 @@ export async function republishSite(
  */
 export async function unpublishPost(
   post: Post,
-  deps: { config: BlogConfig; cf: CloudflareClient; r2: R2; siteDir: string },
+  deps: { config: BlogConfig; cf: CloudflareClient; siteDir: string },
   onProgress: (p: PublishProgress) => void,
 ): Promise<PublishResult> {
   const draft: Post = { ...post, frontMatter: { ...post.frontMatter, draft: true } }
-  await saveDraft(draft, deps.siteDir, deps.r2)
+  await saveDraft(draft, deps.siteDir)
   const res = await republishSite(deps, onProgress)
   return res.ok
     ? res
@@ -142,24 +143,23 @@ export async function unpublishPost(
 }
 
 /**
- * Delete a post: the local file, its backup, and the page on the blog.
+ * Delete a post: the local file and the page on the blog. The caller marks it
+ * deleted in the shared database; its recent versions stay there.
  *
  * With `media`, its photos and videos go from the bucket too, except any that
  * another post still shows. That happens only after the redeploy succeeds, so
  * a failed deploy never leaves a live page with broken images. The originals
- * stay on this computer either way. Dated backups in `_source/history/` are
- * kept, so a deleted post is still recoverable by hand.
+ * stay on this computer either way.
  */
 export async function removePost(
   slug: string,
   opts: { media: boolean },
   deps: { config: BlogConfig; cf: CloudflareClient; r2: R2; library: Library; siteDir: string },
   onProgress: (p: PublishProgress) => void,
-): Promise<PublishResult & { mediaDeleted: number }> {
+): Promise<PublishResult & { mediaDeleted: number; removedKeys: string[] }> {
   const { r2, library, siteDir } = deps
   const post = await readPost(siteDir, slug)
   await deletePost(siteDir, slug)
-  await r2.delete(`_source/posts/${slug}.md`).catch(() => {})
 
   if (post && !post.frontMatter.draft) {
     const res = await republishSite(deps, onProgress)
@@ -167,6 +167,7 @@ export async function removePost(
       return {
         ...res,
         mediaDeleted: 0,
+        removedKeys: [],
         message:
           'The post is deleted here, but your blog could not be updated just now. ' +
           'It will come off the next time you publish.',
@@ -174,7 +175,7 @@ export async function removePost(
     }
   }
 
-  let mediaDeleted = 0
+  const removedKeys: string[] = []
   if (opts.media) {
     const stillShown = new Set<string>()
     for (const other of await listPosts(siteDir)) {
@@ -184,8 +185,9 @@ export async function removePost(
     for (const asset of library.forPost(slug)) {
       if (stillShown.has(asset.key)) continue
       await r2.delete(asset.key).catch(() => {})
+      if (asset.hasPoster) await r2.delete(posterKey(asset.key)).catch(() => {})
       await library.remove(asset.key)
-      mediaDeleted++
+      removedKeys.push(asset.key)
     }
   }
 
@@ -193,7 +195,8 @@ export async function removePost(
   return {
     ok: true,
     url: config.customDomain ? `https://${config.customDomain}/` : `${config.siteUrl}/`,
-    mediaDeleted,
+    mediaDeleted: removedKeys.length,
+    removedKeys,
   }
 }
 
@@ -243,60 +246,9 @@ async function deployAndVerify(
       }
 }
 
-/**
- * Mirror the markdown and config into the bucket.
- *
- * Also called on a timer for drafts: an unpublished post otherwise exists in
- * exactly one place, and a dead laptop takes it along.
- */
-export async function backupSource(siteDir: string, r2: R2): Promise<number> {
-  let count = 0
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-
-  const config = await readFile(path.join(siteDir, 'hugo.yaml'), 'utf8')
-  await r2.putText('_source/hugo.yaml', config)
-  count++
-
-  const postsDir = path.join(siteDir, 'content', 'posts')
-  const names = (await readdir(postsDir).catch(() => [])).filter((n) => n.endsWith('.md'))
-  for (const name of names) {
-    const body = await readFile(path.join(postsDir, name), 'utf8')
-    await r2.putText(`_source/posts/${name}`, body)
-    // Keep a dated copy as well, so an accidental overwrite is recoverable.
-    await r2.putText(`_source/history/${stamp}/${name}`, body)
-    count += 2
-  }
-  return count
-}
-
-/** Pull the source back down — recovery on a new machine. */
-export async function restoreSource(
-  r2: R2,
-  siteDir: string,
-): Promise<{ posts: number }> {
-  const objects = await r2.list('_source/posts/')
-  let posts = 0
-  for (const obj of objects) {
-    const body = await r2.getText(obj.key)
-    if (body === null) continue
-    const name = path.basename(obj.key)
-    const { writeFile, mkdir } = await import('node:fs/promises')
-    await mkdir(path.join(siteDir, 'content', 'posts'), { recursive: true })
-    await writeFile(path.join(siteDir, 'content', 'posts', name), body, 'utf8')
-    posts++
-  }
-  return { posts }
-}
-
-/** Save a draft without publishing: local file plus the off-machine mirror. */
-export async function saveDraft(
-  post: Post,
-  siteDir: string,
-  r2: R2 | null,
-): Promise<void> {
+/** Save a draft without publishing. The caller shares it. */
+export async function saveDraft(post: Post, siteDir: string): Promise<void> {
   await writePost(siteDir, post)
-  if (!r2) return
-  await r2.putText(`_source/posts/${post.slug}.md`, serializePost(post)).catch(() => {})
 }
 
 export async function allPosts(siteDir: string): Promise<Post[]> {

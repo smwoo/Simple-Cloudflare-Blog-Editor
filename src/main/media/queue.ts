@@ -7,7 +7,7 @@
  */
 import { cpus } from 'node:os'
 import { existsSync } from 'node:fs'
-import type { Asset, JobProgress } from '../../shared/types.js'
+import { posterKey, type Asset, type JobProgress } from '../../shared/types.js'
 import type { Library } from '../db/library.js'
 import type { R2 } from '../cloudflare/r2.js'
 import { ingest, type ConvertSettings, type IngestPaths } from './pipeline.js'
@@ -82,6 +82,18 @@ export class MediaQueue {
     }
   }
 
+  /**
+   * Send the web file, and for a video its poster frame too, so another
+   * computer can show the video without downloading it.
+   */
+  private async upload(r2: R2, asset: Asset, onProgress?: (fraction: number) => void): Promise<void> {
+    await r2.putFile(asset.key, asset.outputPath!, onProgress ? { onProgress } : undefined)
+    if (asset.kind === 'video' && asset.posterPath && existsSync(asset.posterPath)) {
+      await r2.putFile(posterKey(asset.key), asset.posterPath)
+      await this.library.update(asset.key, { hasPoster: true })
+    }
+  }
+
   private async process(job: QueuedFile): Promise<void> {
     const { key } = job
     try {
@@ -108,9 +120,7 @@ export class MediaQueue {
         return
       }
 
-      await r2.putFile(key, asset.outputPath!, {
-        onProgress: (fraction) => this.emit({ key, state: 'uploading', fraction }),
-      })
+      await this.upload(r2, asset, (fraction) => this.emit({ key, state: 'uploading', fraction }))
       await this.library.setState(key, 'live')
       this.emit({ key, state: 'live', fraction: 1 })
     } catch (e) {
@@ -133,7 +143,7 @@ export class MediaQueue {
       const retryable = asset.state === 'uploading' || asset.state === 'failed'
       if (!retryable || !asset.outputPath || !existsSync(asset.outputPath)) continue
       try {
-        await r2.putFile(asset.key, asset.outputPath)
+        await this.upload(r2, asset)
         await this.library.setState(asset.key, 'live')
         this.emit({ key: asset.key, state: 'live', fraction: 1 })
         uploaded++
@@ -151,7 +161,8 @@ export class MediaQueue {
 
   async retry(key: string): Promise<void> {
     const asset = this.library.get(key)
-    if (!asset) return
+    // Added on another computer: there is no original here to convert again.
+    if (!asset || asset.originalAvailable === false) return
     // Conversion already done (the upload failed): re-send, don't re-encode.
     if (asset.outputPath && existsSync(asset.outputPath)) {
       const r2 = this.r2()
@@ -159,9 +170,7 @@ export class MediaQueue {
       try {
         await this.library.setState(key, 'uploading')
         this.emit({ key, state: 'uploading', fraction: 0 })
-        await r2.putFile(key, asset.outputPath, {
-          onProgress: (fraction) => this.emit({ key, state: 'uploading', fraction }),
-        })
+        await this.upload(r2, asset, (fraction) => this.emit({ key, state: 'uploading', fraction }))
         await this.library.setState(key, 'live')
         this.emit({ key, state: 'live', fraction: 1 })
       } catch (e) {

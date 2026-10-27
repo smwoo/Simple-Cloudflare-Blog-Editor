@@ -110,6 +110,18 @@ describe('posts between two computers', () => {
     expect(textOf(await readPost(b.siteDir, conflicts[0].copySlug))).toBe('v2 on mac')
   })
 
+  it("autosaves from an editor that never heard of its own computer's saves are not conflicts", async () => {
+    const a = await computer('MacBook')
+    await a.save(post('trip', 'v1'))
+    await a.engine.flush()
+    // The editor loaded the post at version 1 and keeps sending that.
+    for (const text of ['v2', 'v3', 'v4']) {
+      await a.save(post('trip', text), 1)
+      expect(await a.engine.flush()).toEqual([])
+    }
+    expect((await db.getPost('trip'))!.version).toBe(4)
+  })
+
   it('a deleted post goes everywhere and does not come back', async () => {
     const a = await computer('MacBook')
     const b = await computer('PC')

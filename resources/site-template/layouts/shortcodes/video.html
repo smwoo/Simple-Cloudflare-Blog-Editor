@@ -1,6 +1,8 @@
 {{- $src := .Get "src" -}}
+{{- /* The app uploads every video's poster frame beside it. */ -}}
+{{- $poster := .Get "poster" | default (printf "%s.poster.jpg" $src) -}}
 <figure class="video">
-  <video controls preload="metadata" playsinline{{ with .Get "poster" }} poster="{{ . }}"{{ end }}>
+  <video controls preload="metadata" playsinline poster="{{ $poster | safeURL }}">
     <source src="{{ $src | safeURL }}" type="video/mp4">
   </video>
   {{- with .Get "caption" }}<figcaption>{{ . | markdownify }}</figcaption>{{ end -}}

@@ -14,7 +14,7 @@ import { mkdir, copyFile, stat, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { toolPath, run, probe, type Probe } from './ffmpeg.js'
-import type { Asset, AssetKind } from '../../shared/types.js'
+import { posterKey, type Asset, type AssetKind } from '../../shared/types.js'
 
 export const IMAGE_EXT = new Set([
   'jpg', 'jpeg', 'png', 'heic', 'heif', 'tif', 'tiff', 'webp', 'gif', 'bmp',
@@ -372,7 +372,10 @@ export async function ingest(
     })
   } else {
     const out = await convertVideo(originalPath, outputPath, settings, onProgress)
-    await makePoster(outputPath, posterPath)
+    // Beside the video rather than in the cache: it is uploaded with it, and
+    // the preview server serves this folder as /media.
+    const videoPoster = path.join(paths.outputDir, posterKey(key))
+    await makePoster(outputPath, videoPoster)
     const proxyPath = path.join(paths.cacheDir, `${base}.preview.mp4`)
     await makePreviewProxy(outputPath, proxyPath)
     Object.assign(asset, {
@@ -380,7 +383,7 @@ export async function ingest(
       height: out.height,
       durationSec: out.durationSec,
       bytesOutput: out.bytes,
-      posterPath,
+      posterPath: videoPoster,
       proxyPath,
       state: 'uploading',
     })

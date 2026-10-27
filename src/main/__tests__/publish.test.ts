@@ -90,7 +90,8 @@ describe('back to draft', () => {
     const res = await unpublishPost(post('trip', ['trip/g/g-1.avif']), deps(), noProgress)
     expect(res.ok, res.log).toBe(true)
     expect((await readPost(deps().siteDir, 'trip'))?.frontMatter.draft).toBe(true)
-    expect(events.log).toContain('put:_source/posts/trip.md')
+    // Nothing goes to the bucket: posts are shared through the database now.
+    expect(events.log.some((e) => e.startsWith('put:'))).toBe(false)
     expect(events.log).toContain('deploy:home')
     // Media stays, so publishing again is instant.
     expect(events.log.some((e) => e.startsWith('delete:'))).toBe(false)
@@ -98,18 +99,18 @@ describe('back to draft', () => {
 })
 
 describe('delete', () => {
-  it('removes the file, the backup, and the page, then the media no other post shows', async () => {
+  it('removes the file and the page, then the media no other post shows', async () => {
     if (!hugoOk) return
     const res = await removePost('trip', { media: true }, deps(), noProgress)
     expect(res.ok, res.log).toBe(true)
     expect(existsSync(path.join(deps().siteDir, 'content', 'posts', 'trip.md'))).toBe(false)
     expect(events.log).toEqual([
-      'delete:_source/posts/trip.md',
       'deploy:home',
       // Only after the deploy, and never the photo `home` still shows.
       'delete:trip/g/g-1.avif',
     ])
     expect(res.mediaDeleted).toBe(1)
+    expect(res.removedKeys).toEqual(['trip/g/g-1.avif'])
     expect(library.get('trip/g/g-1.avif')).toBeUndefined()
     expect(library.get('trip/g/g-2.avif')).toBeDefined()
   })
@@ -118,7 +119,7 @@ describe('delete', () => {
     if (!hugoOk) return
     const res = await removePost('trip', { media: false }, deps(), noProgress)
     expect(res.ok).toBe(true)
-    expect(events.log).toEqual(['delete:_source/posts/trip.md', 'deploy:home'])
+    expect(events.log).toEqual(['deploy:home'])
     expect(library.get('trip/g/g-1.avif')).toBeDefined()
   })
 
@@ -126,7 +127,14 @@ describe('delete', () => {
     await writePost(deps().siteDir, post('trip', ['trip/g/g-1.avif'], true))
     const res = await removePost('trip', { media: true }, deps(), noProgress)
     expect(res.ok).toBe(true)
-    expect(events.log).toEqual(['delete:_source/posts/trip.md', 'delete:trip/g/g-1.avif'])
+    expect(events.log).toEqual(['delete:trip/g/g-1.avif'])
+  })
+
+  it("takes a video's poster frame with it", async () => {
+    await library.update('trip/g/g-1.avif', { hasPoster: true })
+    await writePost(deps().siteDir, post('trip', ['trip/g/g-1.avif'], true))
+    await removePost('trip', { media: true }, deps(), noProgress)
+    expect(events.log).toEqual(['delete:trip/g/g-1.avif', 'delete:trip/g/g-1.avif.poster.jpg'])
   })
 
   it('keeps the media when the redeploy fails, so no live page loses its photos', async () => {
@@ -135,7 +143,7 @@ describe('delete', () => {
     const res = await removePost('trip', { media: true }, deps(), noProgress)
     expect(res.ok).toBe(false)
     expect(res.message).toMatch(/next time you publish/)
-    expect(events.log).toEqual(['delete:_source/posts/trip.md'])
+    expect(events.log).toEqual([])
     expect(library.get('trip/g/g-1.avif')).toBeDefined()
   })
 })

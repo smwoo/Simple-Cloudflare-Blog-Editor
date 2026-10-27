@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, protocol, net } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, protocol, net, session } from 'electron'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readFile } from 'node:fs/promises'
@@ -9,19 +9,30 @@ import { Library } from './db/library.js'
 import { MediaQueue } from './media/queue.js'
 import { DEFAULT_SETTINGS, allocateKey, kindOf } from './media/pipeline.js'
 import { assertFfmpegVersion } from './media/ffmpeg.js'
-import { CloudflareClient } from './cloudflare/api.js'
+import { CloudflareClient, CloudflareError } from './cloudflare/api.js'
 import { R2 } from './cloudflare/r2.js'
+import { RestD1, listDatabases } from './cloudflare/d1.js'
 import { createFetchHandler } from './cloudflare/fetchHandler.js'
-import { provision, type SetupInput } from './setup.js'
+import { provision, EXISTING_BLOG, type SetupInput } from './setup.js'
 import {
   publish,
   republishSite,
   unpublishPost,
   removePost as removePostEverywhere,
   saveDraft,
-  backupSource,
-  restoreSource,
+  type PublishResult,
 } from './publish.js'
+import { BlogDb } from './sync/remote.js'
+import { SyncEngine, ensureState, type Conflict } from './sync/engine.js'
+import { migrate, NewerDatabaseError } from './sync/migrate.js'
+import {
+  findBlogs,
+  connectBlog,
+  recoverUnmoved,
+  KeysRejectedError,
+  BuildFailedError,
+  type UnmovedBlog,
+} from './sync/connect.js'
 import { attachDomain, registrarUrl, listBlogDomains, removeDomain } from './domain.js'
 import { initUpdater, updateState } from './updater.js'
 import {
@@ -36,7 +47,7 @@ import {
   setBaseUrl,
 } from './site/hugo.js'
 import { referencedKeys } from '../shared/markdown.js'
-import type { Post, BlogConfig, Asset } from '../shared/types.js'
+import { posterKey, type Post, type BlogConfig, type Asset, type Secrets } from '../shared/types.js'
 
 // ---------------------------------------------------------------- state
 
@@ -49,7 +60,20 @@ let cf: CloudflareClient | null = null
 let r2: R2 | null = null
 const preview = new PreviewServer()
 
+/** Sharing with other computers: null until the blog has a database. */
+let sync: SyncEngine | null = null
+/**
+ * Moving a blog from before sharing into its database.
+ * `needs-permission`: the token lacks D1; the owner adds it, then checks again.
+ */
+type MigrationState = 'not-needed' | 'needs-permission' | 'running' | 'failed' | 'done'
+let migration: { state: MigrationState; message?: string } = { state: 'not-needed' }
+let presence: string[] = []
+/** The last pull failed: shown so "Saved" is not mistaken for "shared". */
+let offline = false
+
 const dataDir = () => path.join(app.getPath('userData'), 'blog')
+const statePath = () => path.join(dataDir(), 'sync.json')
 
 function send(channel: string, payload: unknown) {
   win?.webContents.send(channel, payload)
@@ -62,11 +86,220 @@ async function connect(): Promise<void> {
   if (!config || !secrets) {
     cf = null
     r2 = null
+    sync = null
     return
   }
   cf = new CloudflareClient(secrets.cloudflareToken)
   r2 = new R2(config.accountId, secrets, config.bucket)
+  sync = config.databaseId
+    ? await SyncEngine.open(new BlogDb(new RestD1(cf, config.accountId, config.databaseId)), {
+        siteDir: store.paths().site,
+        library,
+        statePath: statePath(),
+      })
+    : null
 }
+
+function siteOrigin(): string | null {
+  if (!config) return null
+  return config.customDomain ? `https://${config.customDomain}` : config.siteUrl
+}
+
+function syncStatus() {
+  return {
+    shared: !!sync,
+    migration,
+    machineName: sync?.machineName,
+    others: presence,
+    pending: sync?.pending ?? 0,
+    offline,
+  }
+}
+
+const pushStatus = () => send('sync:status', syncStatus())
+
+// ---------------------------------------------------------------- sync
+
+/**
+ * Send unsent work. Never throws: offline is normal, and the work waits in
+ * sync.json. Conflicts are told to the writer, who now has both versions.
+ */
+async function flushSync(): Promise<Conflict[]> {
+  if (!sync) return []
+  try {
+    const conflicts = await sync.flush()
+    offline = false
+    if (conflicts.length) send('sync:conflict', conflicts)
+    return conflicts
+  } catch {
+    offline = true
+    return []
+  } finally {
+    pushStatus()
+  }
+}
+
+/** Bring in other computers' changes and tell the editor which posts moved. */
+async function pullSync(): Promise<boolean> {
+  if (!sync) return false
+  try {
+    const res = await sync.pull()
+    offline = false
+    if (res.blog) await applyBlogSettings(res.blog)
+    if (res.posts.length || res.assets) send('sync:changed', { posts: res.posts, assets: res.assets })
+    return true
+  } catch {
+    offline = true
+    return false
+  } finally {
+    pushStatus()
+  }
+}
+
+/** Settings changed on another computer: the address, password or storage keys. */
+async function applyBlogSettings(blog: Awaited<ReturnType<BlogDb['readBlog']>> & object) {
+  if (!config) return
+  const next: BlogConfig = { ...config }
+  delete next.customDomain
+  delete next.sitePassword
+  if (blog.customDomain) next.customDomain = blog.customDomain
+  if (blog.sitePassword) next.sitePassword = blog.sitePassword
+  const domainChanged = next.customDomain !== config.customDomain
+  config = next
+  await store.writeConfig(config)
+  if (domainChanged) await setBaseUrl(store.paths().site, siteOrigin()!)
+
+  const secrets = await store.readSecrets()
+  if (
+    secrets &&
+    (secrets.r2AccessKeyId !== blog.r2AccessKeyId || secrets.r2SecretAccessKey !== blog.r2Secret)
+  ) {
+    const updated: Secrets = { ...secrets, r2AccessKeyId: blog.r2AccessKeyId, r2SecretAccessKey: blog.r2Secret }
+    await store.writeSecrets(updated)
+    r2 = new R2(config.accountId, updated, config.bucket)
+  }
+}
+
+/** Share a site-wide setting; the next pull elsewhere applies it. */
+async function shareSettings(patch: Parameters<BlogDb['updateBlog']>[0]) {
+  if (!sync) return
+  await sync.db.updateBlog(patch).catch(() => {
+    /* the next change sends the whole state again; not worth failing the action */
+  })
+}
+
+async function heartbeat() {
+  if (!sync) return
+  try {
+    presence = await sync.heartbeat({ platform: process.platform, appVersion: app.getVersion() })
+  } catch {
+    /* offline: keep the last answer */
+  }
+  pushStatus()
+}
+
+/**
+ * A blog from before sharing moves into its database here, once the token
+ * allows D1. Until then everything works as before, on this computer only.
+ */
+async function tryMigrate(): Promise<void> {
+  if (!config || config.databaseId || !cf || !r2 || migration.state === 'running') return
+  const secrets = await store.readSecrets()
+  if (!secrets) return
+  try {
+    await listDatabases(cf, config.accountId)
+  } catch (e) {
+    const status = (e as CloudflareError).status
+    migration =
+      status === 401 || status === 403
+        ? { state: 'needs-permission' }
+        : { state: 'failed', message: 'Could not reach Cloudflare. It will try again next time.' }
+    pushStatus()
+    return
+  }
+
+  migration = { state: 'running', message: 'Getting your blog ready for other computers…' }
+  pushStatus()
+  try {
+    const identity = await ensureState(statePath())
+    const res = await migrate({
+      cf,
+      config,
+      secrets,
+      library,
+      siteDir: store.paths().site,
+      r2,
+      machineId: identity.machineId,
+      onProgress: (detail) => {
+        migration = { state: 'running', message: detail }
+        pushStatus()
+      },
+    })
+    config = { ...config, databaseId: res.databaseId }
+    await store.writeConfig(config)
+    await connect()
+    await sync!.adopt(res.versions, res.blogUpdatedAt, res.at)
+    migration = { state: 'done' }
+    await heartbeat()
+  } catch (e) {
+    migration = {
+      state: 'failed',
+      message:
+        e instanceof NewerDatabaseError
+          ? e.message
+          : `Could not finish getting your blog ready for other computers: ${e instanceof Error ? e.message : String(e)}. Nothing was lost; it will try again next time.`,
+    }
+  }
+  pushStatus()
+}
+
+/**
+ * Before anything that redeploys: send this computer's work and bring in
+ * everyone else's. A deploy replaces the whole site, so it must be built from
+ * every post, not just the ones this computer has.
+ */
+async function readyToDeploy(post?: Post): Promise<PublishResult | null> {
+  if (!sync) return null
+  const url = siteOrigin() ?? ''
+  if (post) {
+    await writePostLocal(post)
+    await sync.postSaved(post.slug, post.syncVersion)
+  }
+  let conflicts: Conflict[]
+  try {
+    conflicts = await sync.flush()
+    await sync.pull()
+    offline = false
+  } catch (e) {
+    offline = true
+    pushStatus()
+    return {
+      ok: false,
+      url,
+      message:
+        "Couldn't reach your blog just now, so nothing was published. Your work is saved. Try again in a minute.",
+      log: e instanceof Error ? e.message : String(e),
+    }
+  }
+  pushStatus()
+  const mine = conflicts.find((c) => c.slug === post?.slug)
+  if (conflicts.length) send('sync:conflict', conflicts)
+  if (mine) {
+    return {
+      ok: false,
+      url,
+      message: `This post was also changed on ${mine.machineName}. Both versions are kept — check them, then publish again.`,
+    }
+  }
+  return null
+}
+
+async function writePostLocal(post: Post) {
+  await saveDraft(post, store.paths().site)
+}
+
+/** The editor's copy of a post, with the shared version it was loaded at. */
+const withVersion = (post: Post): Post => ({ ...post, syncVersion: sync?.versionOf(post.slug) })
 
 // ---------------------------------------------------------------- window
 
@@ -142,16 +375,68 @@ protocol.registerSchemesAsPrivileged([
 
 function registerMediaProtocol() {
   const paths = store.paths()
+  const inside = (root: string, file: string) => path.resolve(file).startsWith(path.resolve(root) + path.sep)
+
+  /**
+   * Media this computer did not make is shown from the blog itself, never
+   * downloaded on purpose. net.fetch goes through Chromium's HTTP cache, and
+   * media is served immutable, so each file crosses the network once.
+   */
+  const fromBlog = (key: string, request: Request) => {
+    const origin = siteOrigin()
+    if (!origin) return new Response('Not found', { status: 404 })
+    const range = request.headers.get('range')
+    return net.fetch(`${origin}/media/${key.split('/').map(encodeURIComponent).join('/')}`, {
+      headers: range ? { range } : {},
+    })
+  }
+  const fromDisk = (file: string) => net.fetch(pathToFileURL(file).toString())
+
+  // blogmedia://output/<key>   the web file
+  // blogmedia://poster/<key>   thumbnail (image) or poster frame (video)
+  // blogmedia://play/<key>     what the editor plays: the H.264 proxy where there is one
+  // blogmedia://cache/<file>   thumbnails by file name, as before
   protocol.handle('blogmedia', async (request) => {
     const url = new URL(request.url)
-    // blogmedia://output/<key>  |  blogmedia://cache/<file>
-    const root = url.hostname === 'cache' ? paths.cache : paths.output
     const rel = decodeURIComponent(url.pathname.replace(/^\//, ''))
-    const file = path.join(root, rel)
-    // Never serve outside the roots we own.
-    if (!file.startsWith(root)) return new Response('Forbidden', { status: 403 })
-    if (!existsSync(file)) return new Response('Not found', { status: 404 })
-    return net.fetch(pathToFileURL(file).toString())
+
+    if (url.hostname === 'cache') {
+      const file = path.join(paths.cache, rel)
+      if (!inside(paths.cache, file)) return new Response('Forbidden', { status: 403 })
+      if (!existsSync(file)) return new Response('Not found', { status: 404 })
+      return fromDisk(file)
+    }
+
+    const key = rel
+    const output = path.join(paths.output, key)
+    if (!inside(paths.output, output)) return new Response('Forbidden', { status: 403 })
+    const asset = library.get(key)
+    const local = (file?: string) => !!file && existsSync(file)
+
+    switch (url.hostname) {
+      case 'output':
+        return local(output) ? fromDisk(output) : fromBlog(key, request)
+      case 'poster':
+        if (local(asset?.posterPath)) return fromDisk(asset!.posterPath!)
+        if (asset?.kind === 'image') return local(output) ? fromDisk(output) : fromBlog(key, request)
+        return asset?.hasPoster ? fromBlog(posterKey(key), request) : new Response('Not found', { status: 404 })
+      case 'play':
+        if (local(asset?.proxyPath)) return fromDisk(asset!.proxyPath!)
+        return local(output) ? fromDisk(output) : fromBlog(key, request)
+      default:
+        return new Response('Not found', { status: 404 })
+    }
+  })
+
+  // The preview server mounts this computer's media folder at /media. What is
+  // not there was made elsewhere and comes from the blog instead.
+  session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://127.0.0.1/*'] }, (details, done) => {
+    const m = /^http:\/\/127\.0\.0\.1:\d+\/media\/([^?#]+)/.exec(details.url)
+    const origin = siteOrigin()
+    if (!m || !origin) return done({})
+    const file = path.join(paths.output, decodeURIComponent(m[1]))
+    if (!inside(paths.output, file) || existsSync(file)) return done({})
+    done({ redirectURL: `${origin}/media/${m[1]}` })
   })
 }
 
@@ -169,25 +454,114 @@ function registerIpc() {
       tools: { hugo, ffmpeg },
       platform: process.platform,
       version: app.getVersion(),
+      sync: syncStatus(),
     }
   })
 
-  ipcMain.handle('setup:checkToken', async (_e, token: string) => {
-    return new CloudflareClient(token).checkToken()
+  ipcMain.handle('setup:checkToken', async (_e, token: string, accountId?: string) => {
+    return new CloudflareClient(token).checkToken(accountId)
   })
 
   ipcMain.handle('setup:provision', async (_e, input: SetupInput) => {
     try {
-      const { config: cfg, secrets } = await provision(input, dataDir(), (steps) =>
-        send('setup:progress', steps),
+      const identity = await ensureState(statePath())
+      const { config: cfg, secrets } = await provision(
+        input,
+        dataDir(),
+        (steps) => send('setup:progress', steps),
+        identity.machineId,
       )
       await store.writeSecrets(secrets)
       await store.writeConfig(cfg)
       await connect()
+      await heartbeat()
       return { ok: true, config: cfg }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      return { ok: false, error: message, existingBlog: message === EXISTING_BLOG }
+    }
+  })
+
+  // ---- connecting this computer to a blog that already exists
+  ipcMain.handle('connect:find', async (_e, token: string) => {
+    try {
+      const client = new CloudflareClient(token)
+      const found = await findBlogs(client)
+      // Permissions are checked in the account the blog is in, not just the first one.
+      const accountIds = [...new Set([...found.blogs, ...found.unmoved].map((b) => b.accountId))]
+      const checks = Object.fromEntries(
+        await Promise.all(accountIds.map(async (id) => [id, await client.checkToken(id)] as const)),
+      )
+      return { ok: true, ...found, checks }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
+  })
+
+  const connectError = (e: unknown) => ({
+    ok: false,
+    error: e instanceof Error ? e.message : String(e),
+    keysRejected: e instanceof KeysRejectedError,
+    needsUpdate: e instanceof NewerDatabaseError,
+    log: e instanceof BuildFailedError ? e.log : undefined,
+  })
+
+  ipcMain.handle(
+    'connect:run',
+    async (
+      _e,
+      args: { token: string; accountId: string; databaseId: string; keys?: { r2AccessKeyId: string; r2SecretAccessKey: string } },
+    ) => {
+      try {
+        const res = await connectBlog({
+          ...args,
+          siteDir: store.paths().site,
+          library,
+          onProgress: (detail) => send('connect:progress', detail),
+        })
+        await store.writeSecrets(res.secrets)
+        await store.writeConfig(res.config)
+        await connect()
+        await sync!.adopt(res.versions, res.blogUpdatedAt, res.at)
+        migration = { state: 'not-needed' }
+        await heartbeat()
+        return { ok: true, posts: res.posts, assets: res.assets }
+      } catch (e) {
+        return connectError(e)
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'connect:recover',
+    async (
+      _e,
+      args: { token: string; blog: UnmovedBlog; keys: { r2AccessKeyId: string; r2SecretAccessKey: string } },
+    ) => {
+      try {
+        const identity = await ensureState(statePath())
+        const { databaseId } = await recoverUnmoved({
+          ...args,
+          machineId: identity.machineId,
+          onProgress: (detail) => send('connect:progress', detail),
+        })
+        return { ok: true, databaseId }
+      } catch (e) {
+        return connectError(e)
+      }
+    },
+  )
+
+  // ---- sharing
+  ipcMain.handle('sync:status', async () => syncStatus())
+  ipcMain.handle('sync:migrate', async () => {
+    await tryMigrate()
+    return syncStatus()
+  })
+  ipcMain.handle('sync:pull', async () => {
+    await flushSync()
+    await pullSync()
+    return syncStatus()
   })
 
   /** Connection health: the same checks, re-runnable forever. */
@@ -206,8 +580,19 @@ function registerIpc() {
       return out
     }
 
-    const token = await cf.checkToken()
+    const token = await cf.checkToken(config.accountId)
     add('token', 'Cloudflare permission', token.ok, token.missing.join(', ') || token.accountName)
+
+    if (sync) {
+      try {
+        const counts = await sync.db.counts()
+        add('shared', 'Shared with your other computers', true, `${counts.posts} posts`)
+      } catch (e) {
+        add('shared', 'Shared with your other computers', false, e instanceof Error ? e.message : 'unreachable')
+      }
+    } else {
+      add('shared', 'Shared with your other computers', false, migration.message ?? 'not yet')
+    }
 
     try {
       await r2.list('_setup-check/')
@@ -226,19 +611,36 @@ function registerIpc() {
   })
 
   // ---- posts
-  ipcMain.handle('posts:list', async () => (config ? listPosts(store.paths().site) : []))
-  ipcMain.handle('posts:read', async (_e, slug: string) => readPost(store.paths().site, slug))
+  ipcMain.handle('posts:list', async () =>
+    config ? (await listPosts(store.paths().site)).map(withVersion) : [],
+  )
+  ipcMain.handle('posts:read', async (_e, slug: string) => {
+    const post = await readPost(store.paths().site, slug)
+    return post ? withVersion(post) : null
+  })
+  /** Saved here at once; shared when the database answers, which may be later. */
   ipcMain.handle('posts:saveDraft', async (_e, post: Post) => {
-    await saveDraft(post, store.paths().site, r2)
+    await saveDraft(post, store.paths().site)
+    if (sync) {
+      await sync.postSaved(post.slug, post.syncVersion)
+      void flushSync()
+    }
     return { ok: true }
   })
+  /** Local delete, used when a post is renamed: the old name goes from every computer. */
   ipcMain.handle('posts:delete', async (_e, slug: string) => {
     await removePost(store.paths().site, slug)
+    if (sync) {
+      await sync.postDeleted(slug)
+      void flushSync()
+    }
     return { ok: true }
   })
 
   ipcMain.handle('posts:publish', async (_e, post: Post) => {
     if (!cf || !r2 || !config) return { ok: false, message: 'This blog is not set up yet.' }
+    const blocked = await readyToDeploy(post)
+    if (blocked) return blocked
     return publish(post, { config, cf, r2, library, queue, siteDir: store.paths().site }, (p) =>
       send('publish:progress', p),
     )
@@ -247,9 +649,12 @@ function registerIpc() {
   /** Set or clear (empty string) the visitor password, then republish so it takes effect. */
   ipcMain.handle('site:setPassword', async (_e, password: string) => {
     if (!cf || !config) return { ok: false, message: 'This blog is not set up yet.' }
+    const blocked = await readyToDeploy()
+    if (blocked) return blocked
     const { sitePassword: _old, ...rest } = config
     config = password.trim() ? { ...rest, sitePassword: password.trim() } : rest
     await store.writeConfig(config)
+    await shareSettings({ sitePassword: config.sitePassword })
     return republishSite({ config, cf, siteDir: store.paths().site }, (p) =>
       send('publish:progress', p),
     )
@@ -257,7 +662,10 @@ function registerIpc() {
 
   ipcMain.handle('posts:unpublish', async (_e, post: Post) => {
     if (!cf || !r2 || !config) return { ok: false, message: 'This blog is not set up yet.' }
-    return unpublishPost(post, { config, cf, r2, siteDir: store.paths().site }, (p) =>
+    const draft: Post = { ...post, frontMatter: { ...post.frontMatter, draft: true } }
+    const blocked = await readyToDeploy(draft)
+    if (blocked) return blocked
+    return unpublishPost(draft, { config, cf, siteDir: store.paths().site }, (p) =>
       send('publish:progress', p),
     )
   })
@@ -265,12 +673,20 @@ function registerIpc() {
   /** Delete a post from this computer, its backup and the blog; unlike posts:delete, which is local only. */
   ipcMain.handle('posts:remove', async (_e, args: { slug: string; media: boolean }) => {
     if (!cf || !r2 || !config) return { ok: false, message: 'This blog is not set up yet.' }
-    return removePostEverywhere(
+    const blocked = await readyToDeploy()
+    if (blocked) return blocked
+    const res = await removePostEverywhere(
       args.slug,
       { media: args.media },
       { config, cf, r2, library, siteDir: store.paths().site },
       (p) => send('publish:progress', p),
     )
+    if (sync) {
+      await sync.postDeleted(args.slug)
+      for (const key of res.removedKeys) await sync.assetRemoved(key)
+      await flushSync()
+    }
+    return res
   })
 
   // ---- media
@@ -345,10 +761,14 @@ function registerIpc() {
   ipcMain.handle('media:delete', async (_e, keys: string[]) => {
     let deleted = 0
     for (const key of keys) {
+      const asset = library.get(key)
       if (r2) await r2.delete(key).catch(() => {})
+      if (r2 && asset?.hasPoster) await r2.delete(posterKey(key)).catch(() => {})
       await library.remove(key)
+      await sync?.assetRemoved(key)
       deleted++
     }
+    void flushSync()
     return { deleted }
   })
 
@@ -379,6 +799,7 @@ function registerIpc() {
     if (res.attached && res.domain) {
       config = { ...config, customDomain: res.domain }
       await store.writeConfig(config)
+      await shareSettings({ customDomain: res.domain })
     }
     return res
   })
@@ -398,6 +819,7 @@ function registerIpc() {
       const { customDomain: _gone, ...rest } = config
       config = next ? { ...rest, customDomain: next } : rest
       await store.writeConfig(config)
+      await shareSettings({ customDomain: next })
       await setBaseUrl(store.paths().site, next ? `https://${next}` : config.siteUrl)
       domains = domains.map((d) => ({ ...d, primary: d.hostname === next }))
     }
@@ -410,6 +832,7 @@ function registerIpc() {
       const { customDomain: _old, ...rest } = config
       config = res.customDomain ? { ...rest, customDomain: res.customDomain } : rest
       await store.writeConfig(config)
+      await shareSettings({ customDomain: res.customDomain })
     }
     return res
   })
@@ -419,14 +842,6 @@ function registerIpc() {
   ipcMain.handle('shell:open', async (_e, url: string) => shell.openExternal(url))
   ipcMain.handle('shell:reveal', async (_e, which: 'originals' | 'site') => {
     shell.openPath(which === 'originals' ? store.paths().originals : store.paths().site)
-  })
-  ipcMain.handle('backup:now', async () => {
-    if (!r2) return { ok: false }
-    return { ok: true, files: await backupSource(store.paths().site, r2) }
-  })
-  ipcMain.handle('backup:restore', async () => {
-    if (!r2) return { ok: false, posts: 0 }
-    return { ok: true, ...(await restoreSource(r2, store.paths().site)) }
   })
 
   /** Copy report: everything a helper needs, with credentials scrubbed. */
@@ -445,12 +860,18 @@ function registerIpc() {
       lines.push(`Site: ${config.customDomain ?? config.siteUrl}`)
       lines.push(`Bucket: ${config.bucket}`)
       lines.push(`Account: ${config.accountId.slice(0, 6)}… (truncated)`)
+      const st = syncStatus()
+      lines.push(
+        `Sharing: ${st.shared ? 'on' : `off (${migration.state}${migration.message ? `: ${migration.message}` : ''})`}` +
+          ` · this computer: ${st.machineName ?? '?'} · unsent: ${st.pending}${st.offline ? ' · offline' : ''}`,
+      )
+      if (st.others.length) lines.push(`Also open on: ${st.others.join(', ')}`)
     } else {
       lines.push('Blog: not set up')
     }
     const stats = library.stats()
     lines.push(
-      `Photos: ${stats.count} (${(stats.bytesOutput / 1e6).toFixed(0)} MB web, ${(stats.bytesOriginal / 1e6).toFixed(0)} MB originals)`,
+      `Photos: ${stats.count} (${(stats.bytesOutput / 1e6).toFixed(0)} MB web, ${(stats.bytesOriginal / 1e6).toFixed(0)} MB originals, ${stats.remote} from other computers)`,
     )
     const failed = library.all().filter((a) => a.state === 'failed')
     if (failed.length) {
@@ -474,7 +895,11 @@ app.whenReady().then(async () => {
     DEFAULT_SETTINGS,
     () => r2,
   )
-  queue.onProgress((p) => send('media:progress', p))
+  queue.onProgress((p) => {
+    send('media:progress', p)
+    // Other computers learn of a photo once it is in the bucket, not before.
+    if (p.state === 'live' && sync) void sync.assetChanged(p.key).then(flushSync)
+  })
 
   await connect()
   // A blog configured earlier but never scaffolded (interrupted setup) is
@@ -487,6 +912,22 @@ app.whenReady().then(async () => {
   registerIpc()
   createWindow()
   await initUpdater((s) => send('update:state', s))
+
+  // Sharing. None of this blocks the window: writing works offline, and
+  // anything unsent waits in sync.json.
+  if (sync) {
+    void flushSync().then(pullSync).then(heartbeat)
+  } else if (config) {
+    void tryMigrate()
+  }
+  // Coming back to the window is when another computer's work matters.
+  app.on('browser-window-focus', () => {
+    if (sync) void flushSync().then(pullSync)
+  })
+  setInterval(() => void heartbeat(), 60_000)
+  setInterval(() => {
+    if (sync?.pending) void flushSync()
+  }, 30_000)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

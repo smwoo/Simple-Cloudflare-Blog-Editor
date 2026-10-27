@@ -24,10 +24,26 @@ const on = (channel: string, fn: (payload: any) => void): (() => void) => {
 const api = {
   // status + setup
   status: () => invoke<any>('app:status'),
-  checkToken: (token: string) => invoke<any>('setup:checkToken', token),
+  checkToken: (token: string, accountId?: string) => invoke<any>('setup:checkToken', token, accountId),
   provision: (input: any) => invoke<any>('setup:provision', input),
   onSetupProgress: (fn: (steps: any[]) => void) => on('setup:progress', fn),
   health: () => invoke<any[]>('setup:health'),
+
+  // connecting this computer to an existing blog
+  findBlogs: (token: string) => invoke<any>('connect:find', token),
+  connectBlog: (args: { token: string; accountId: string; databaseId: string; keys?: any }) =>
+    invoke<any>('connect:run', args),
+  recoverBlog: (args: { token: string; blog: any; keys: any }) => invoke<any>('connect:recover', args),
+  onConnectProgress: (fn: (detail: string) => void) => on('connect:progress', fn),
+
+  // sharing with other computers
+  syncStatus: () => invoke<any>('sync:status'),
+  retryMigration: () => invoke<any>('sync:migrate'),
+  syncNow: () => invoke<any>('sync:pull'),
+  onSyncStatus: (fn: (s: any) => void) => on('sync:status', fn),
+  onSyncChanged: (fn: (c: { posts: string[]; assets: number }) => void) => on('sync:changed', fn),
+  onSyncConflict: (fn: (c: { slug: string; copySlug: string; machineName: string }[]) => void) =>
+    on('sync:conflict', fn),
 
   // posts
   listPosts: () => invoke<any[]>('posts:list'),
@@ -68,8 +84,6 @@ const api = {
   // misc
   openExternal: (url: string) => invoke<void>('shell:open', url),
   reveal: (which: 'originals' | 'site') => invoke<void>('shell:reveal', which),
-  backupNow: () => invoke<any>('backup:now'),
-  restoreBackup: () => invoke<any>('backup:restore'),
   buildReport: () => invoke<string>('report:build'),
   updateState: () => invoke<any>('update:state'),
   onUpdateState: (fn: (s: any) => void) => on('update:state', fn),
