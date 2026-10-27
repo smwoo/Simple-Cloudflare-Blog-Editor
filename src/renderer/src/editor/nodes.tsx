@@ -6,7 +6,7 @@
  * shortcode syntax cannot be broken by clicking in the wrong place — there is
  * no text there to edit.
  */
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Node, mergeAttributes } from '@tiptap/core'
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
 import { useAsset, outputUrl, posterUrl, playbackUrl } from './assetStore.js'
@@ -55,11 +55,24 @@ function CaptionField({
   placeholder: string
   onChange: (v: string | null) => void
 }) {
+  // The attribute round-trips through ProseMirror and comes back a render
+  // late, so binding the input to it straight would reset the text and throw
+  // the cursor to the end. Hold the text here and take outside changes (undo,
+  // sync) only while the field isn't being typed in.
+  const ref = useRef<HTMLInputElement>(null)
+  const [text, setText] = useState(value ?? '')
+  useEffect(() => {
+    if (document.activeElement !== ref.current) setText(value ?? '')
+  }, [value])
   return (
     <input
-      value={value ?? ''}
+      ref={ref}
+      value={text}
       placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value || null)}
+      onChange={(e) => {
+        setText(e.target.value)
+        onChange(e.target.value || null)
+      }}
       // Keep keystrokes out of ProseMirror's handler.
       onKeyDown={(e) => e.stopPropagation()}
     />
