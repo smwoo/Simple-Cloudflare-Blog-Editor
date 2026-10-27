@@ -6,9 +6,10 @@ import { Setup } from './setup/Setup.js'
 import { GroupDialog } from './panes/GroupDialog.js'
 import { Settings } from './panes/Settings.js'
 import { DeleteDialog } from './panes/DeleteDialog.js'
+import { CoverPicker } from './panes/CoverPicker.js'
 import { assetStore, useAssets } from './editor/assetStore.js'
 import { appendToGallery, insertAssets } from './editor/insert.js'
-import type { Post, PMNode, BlogConfig, Asset } from '../../shared/types.js'
+import type { Post, PMNode, BlogConfig } from '../../shared/types.js'
 
 const EMPTY_DOC: PMNode = { type: 'doc', content: [{ type: 'paragraph' }] }
 
@@ -607,33 +608,4 @@ function publishLabel(p: { phase: string; detail?: string }): string {
     default:
       return 'Publishing…'
   }
-}
-
-/** Cover photo: pick from this post's library, no file dialog needed. */
-function CoverPicker({
-  cover,
-  postSlug,
-  assets,
-  onPick,
-}: {
-  cover?: string
-  postSlug: string
-  assets: Asset[]
-  onPick: (key: string | undefined) => void
-}) {
-  const options = assets.filter((a) => a.postSlug === postSlug && a.kind === 'image')
-  return (
-    <select
-      value={cover ?? ''}
-      onChange={(e) => onPick(e.target.value || undefined)}
-      style={{ padding: '7px 9px' }}
-    >
-      <option value="">None</option>
-      {options.map((a) => (
-        <option key={a.key} value={a.key}>
-          {a.key.split('/').slice(1).join('/')}
-        </option>
-      ))}
-    </select>
-  )
 }
