@@ -172,6 +172,14 @@ export class R2 {
     return out
   }
 
+  /** The first few keys under a prefix: enough to tell whether a bucket is in use. */
+  async sample(prefix = '', max = 20): Promise<string[]> {
+    const r = await this.client.send(
+      new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, MaxKeys: max }),
+    )
+    return (r.Contents ?? []).map((o) => o.Key!).filter(Boolean)
+  }
+
   async delete(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }))
   }

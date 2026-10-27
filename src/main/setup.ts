@@ -12,6 +12,8 @@ import { writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { CloudflareClient } from './cloudflare/api.js'
 import { R2 } from './cloudflare/r2.js'
+import { RestD1, listDatabases, ensureDatabase, databaseName } from './cloudflare/d1.js'
+import { BlogDb } from './sync/remote.js'
 import { deploySite, waitForLive } from './cloudflare/deploy.js'
 import { scaffold, build, checkHugo, siteOverlay } from './site/hugo.js'
 import { assertFfmpegVersion } from './media/ffmpeg.js'
@@ -42,6 +44,43 @@ export interface Step {
 
 export type OnStep = (steps: Step[]) => void
 
+/** Thrown when the name belongs to a blog that is already running. */
+export const EXISTING_BLOG = 'existing-blog'
+
+/**
+ * Whether `name` is a blog someone already uses: a finished setup writes the
+ * database row last, and any saved post leaves a backup in the bucket. An
+ * interrupted setup leaves neither, so re-running one still adopts its
+ * half-made resources as before.
+ */
+export async function existingBlog(
+  cf: CloudflareClient,
+  accountId: string,
+  name: string,
+  r2: R2 | null,
+): Promise<'database' | 'backup' | null> {
+  const found = (await listDatabases(cf, accountId)).find((d) => d.name === databaseName(name))
+  if (found && (await new BlogDb(new RestD1(cf, accountId, found.uuid)).readBlog())) return 'database'
+  if (r2 && (await r2.sample('_source/posts/', 1)).length) return 'backup'
+  return null
+}
+
+export function welcomeMarkdown(date = new Date().toISOString().slice(0, 10)): string {
+  return [
+    '---',
+    `date: '${date}'`,
+    'draft: false',
+    "title: 'Welcome'",
+    "description: 'Your blog is ready'",
+    '---',
+    '',
+    `## Your blog is live`,
+    '',
+    'This post was created automatically. Edit it or delete it — whatever you like.',
+    '',
+  ].join('\n')
+}
+
 const PROBE_KEY = '_setup-check/probe.avif'
 // 1x1 AVIF, enough to prove PutObject, the Worker binding and the cache header.
 const PROBE_AVIF = Buffer.from(
@@ -57,6 +96,7 @@ export async function provision(
   input: SetupInput,
   dataDir: string,
   onStep: OnStep,
+  machineId: string,
 ): Promise<{ config: BlogConfig; secrets: Secrets }> {
   const steps: Step[] = [
     step('tools', 'Checking the bundled tools'),
@@ -68,6 +108,7 @@ export async function provision(
     step('deploy', 'Publishing it'),
     step('live', 'Waiting for it to go live'),
     step('media', 'Checking photos work'),
+    step('db', 'Saving your blog so other computers can use it'),
   ]
   const emit = () => onStep(steps.map((s) => ({ ...s })))
   const set = (id: string, patch: Partial<Step>) => {
@@ -165,6 +206,30 @@ export async function provision(
     })
     throw e
   }
+
+  // Deploying below replaces the whole site. Over a blog already in use, that
+  // would leave its owner with one Welcome post, so stop and offer Connect.
+  let inUse: Awaited<ReturnType<typeof existingBlog>> = null
+  try {
+    inUse = await existingBlog(cf, accountId, input.name, r2)
+  } catch (e) {
+    set('bucket', {
+      status: 'failed',
+      detail: e instanceof Error ? e.message : String(e),
+      remedy: 'Check the token has the "D1 — Edit" permission, then try again.',
+    })
+    throw e
+  }
+  if (inUse) {
+    set('bucket', {
+      status: 'failed',
+      detail: `A blog called "${input.name}" already exists in this Cloudflare account.`,
+      remedy:
+        'To use it on this computer, go back and choose "I already have a blog". ' +
+        'To make a separate blog, pick a different short name.',
+    })
+    throw new Error(EXISTING_BLOG)
+  }
   set('bucket', { status: 'done', detail: bucket })
 
   const config: BlogConfig = {
@@ -181,23 +246,8 @@ export async function provision(
   const siteDir = path.join(dataDir, 'site')
   await scaffold(siteDir, config)
   await mkdir(path.join(siteDir, 'content', 'posts'), { recursive: true })
-  await writeFile(
-    path.join(siteDir, 'content', 'posts', 'welcome.md'),
-    [
-      '---',
-      `date: '${new Date().toISOString().slice(0, 10)}'`,
-      'draft: false',
-      "title: 'Welcome'",
-      "description: 'Your blog is ready'",
-      '---',
-      '',
-      `## Your blog is live`,
-      '',
-      'This post was created automatically. Edit it or delete it — whatever you like.',
-      '',
-    ].join('\n'),
-    'utf8',
-  )
+  const welcome = welcomeMarkdown()
+  await writeFile(path.join(siteDir, 'content', 'posts', 'welcome.md'), welcome, 'utf8')
   set('scaffold', { status: 'done' })
 
   // ---- 6. build
@@ -278,6 +328,37 @@ export async function provision(
   }
   await r2.delete(PROBE_KEY).catch(() => {})
   set('media', { status: 'done' })
+
+  // ---- 10. the shared database. The blog row goes last: its presence is
+  // what marks this name as a finished blog (see existingBlog).
+  set('db', { status: 'running' })
+  try {
+    const database = await ensureDatabase(cf, accountId, databaseName(input.name))
+    const db = new BlogDb(new RestD1(cf, accountId, database.uuid))
+    await db.applySchema()
+    await db.forcePost(
+      { slug: 'welcome', title: 'Welcome', date: welcome.match(/date: '(.*)'/)![1], draft: false, markdown: welcome },
+      machineId,
+    )
+    await db.writeBlog({
+      name: input.name,
+      title: input.title,
+      author: input.author,
+      siteUrl,
+      bucket,
+      r2AccessKeyId: input.r2AccessKeyId,
+      r2Secret: input.r2SecretAccessKey,
+    })
+    config.databaseId = database.uuid
+  } catch (e) {
+    set('db', {
+      status: 'failed',
+      detail: e instanceof Error ? e.message : String(e),
+      remedy: 'Check the token has the "D1 — Edit" permission, then run setup again.',
+    })
+    throw e
+  }
+  set('db', { status: 'done' })
 
   return {
     config,

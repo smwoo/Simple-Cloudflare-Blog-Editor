@@ -328,6 +328,16 @@ export class BlogDb {
     return rows.map(toAsset)
   }
 
+  /** When a post was last saved, and by which computer: shown when choosing a blog. */
+  async lastEdit(): Promise<{ at: number; machineName: string | null } | null> {
+    const { rows } = await this.d1.query<any>(
+      `SELECT p.updated_at AS at, m.name AS machine FROM posts p
+       LEFT JOIN machines m ON m.id = p.updated_by
+       ORDER BY p.updated_at DESC LIMIT 1`,
+    )
+    return rows[0] ? { at: Number(rows[0].at), machineName: rows[0].machine ?? null } : null
+  }
+
   async counts(): Promise<{ posts: number; assets: number }> {
     const p = await this.d1.query<{ n: number }>('SELECT COUNT(*) AS n FROM posts WHERE deleted_at IS NULL')
     const a = await this.d1.query<{ n: number }>('SELECT COUNT(*) AS n FROM assets WHERE deleted_at IS NULL')
