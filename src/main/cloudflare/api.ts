@@ -72,7 +72,7 @@ export class CloudflareClient {
    * find in the dashboard, so it is what someone will reach for unaided, and it
    * is account-wide god mode that the app would then be storing.
    */
-  async checkToken(): Promise<TokenCheck> {
+  async checkToken(accountId?: string): Promise<TokenCheck> {
     // A Global API Key is 37 hex chars and is not a bearer token at all.
     if (/^[0-9a-f]{37}$/i.test(this.token)) {
       return {
@@ -114,7 +114,8 @@ export class CloudflareClient {
         error: 'The token cannot see any account.',
       }
     }
-    const account = accounts[0]
+    // A token can see several accounts; connecting checks the one the blog is in.
+    const account = accounts.find((a) => a.id === accountId) ?? accounts[0]
 
     const granted: string[] = []
     const missing: string[] = []
@@ -142,6 +143,18 @@ export class CloudflareClient {
       missing,
       optionalMissing,
     }
+  }
+
+  async listAccounts(): Promise<{ id: string; name: string }[]> {
+    return (await this.request<{ id: string; name: string }[]>('/accounts?per_page=50')) ?? []
+  }
+
+  // ------------------------------------------------------------ workers
+
+  async workerExists(accountId: string, scriptName: string): Promise<boolean> {
+    const scripts =
+      (await this.request<{ id: string }[]>(`/accounts/${accountId}/workers/scripts`)) ?? []
+    return scripts.some((s) => s.id === scriptName)
   }
 
   // ------------------------------------------------------------ workers.dev
@@ -254,7 +267,14 @@ export const REQUIRED_PERMISSIONS: Permission[] = [
     label: 'Workers Scripts — Edit',
     probe: (c, id) => c.request(`/accounts/${id}/workers/scripts`),
   },
+  {
+    // Posts and the photo list live here so another computer can carry on.
+    label: 'D1 — Edit',
+    probe: (c, id) => c.request(`/accounts/${id}/d1/database?per_page=1`),
+  },
 ]
+
+export const D1_PERMISSION = 'D1 — Edit'
 
 /** Only the custom-domain flow needs these; setup succeeds without them. */
 export const OPTIONAL_PERMISSIONS: Permission[] = [

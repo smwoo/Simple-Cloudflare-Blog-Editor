@@ -41,6 +41,12 @@ export interface Post {
   slug: string
   frontMatter: FrontMatter
   doc: PMNode
+  /**
+   * The shared-database version this copy was loaded at. Sent back with each
+   * save, so a change made meanwhile on another computer is detected rather
+   * than overwritten. Never written to the file.
+   */
+  syncVersion?: number
 }
 
 // ---------------------------------------------------------------- media
@@ -84,6 +90,14 @@ export interface Asset {
   durationSec?: number
   error?: string
   createdAt: number
+  /**
+   * False when this computer did not add the asset: it has the row from the
+   * shared database but no original, and shows the web version from the blog.
+   * Undefined on assets from before sharing, which were all added here.
+   */
+  originalAvailable?: boolean
+  /** A video whose `<key>.poster.jpg` is in the bucket. */
+  hasPoster?: boolean
 }
 
 /** Site path for an asset. Root-relative so a domain change rewrites no content. */
@@ -126,6 +140,8 @@ export interface BlogConfig {
    * owner hands it out, and because it guards nothing: see `siteOverlay`.
    */
   sitePassword?: string
+  /** The shared D1 database. Unset on a blog from before sharing, until it migrates. */
+  databaseId?: string
 }
 
 /** Never serialised to disk in the clear — held in Electron safeStorage. */

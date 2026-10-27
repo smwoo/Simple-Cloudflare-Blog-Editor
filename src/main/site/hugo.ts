@@ -124,6 +124,18 @@ export async function listPosts(dir: string): Promise<Post[]> {
   return posts.sort((a, b) => (a.frontMatter.date < b.frontMatter.date ? 1 : -1))
 }
 
+/** The post file exactly as stored, for sharing it without a parse round trip. */
+export async function readPostMarkdown(dir: string, slug: string): Promise<string | null> {
+  const file = path.join(dir, 'content', 'posts', `${slug}.md`)
+  return existsSync(file) ? readFile(file, 'utf8') : null
+}
+
+export async function writePostMarkdown(dir: string, slug: string, markdown: string): Promise<void> {
+  const file = path.join(dir, 'content', 'posts', `${slug}.md`)
+  await mkdir(path.dirname(file), { recursive: true })
+  await writeFile(file, markdown, 'utf8')
+}
+
 export async function deletePost(dir: string, slug: string): Promise<void> {
   await rm(path.join(dir, 'content', 'posts', `${slug}.md`), { force: true })
 }
