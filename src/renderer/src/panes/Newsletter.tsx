@@ -1,7 +1,5 @@
 import React, { useEffect, useState } from 'react'
 
-type Provider = 'cloudflare' | 'resend'
-
 interface Mailing {
   id: number
   post: string | null
@@ -23,25 +21,8 @@ const when = (ms: number) =>
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
-const PROVIDERS: { id: Provider; label: string; help: string; url: string }[] = [
-  {
-    id: 'cloudflare',
-    label: 'Cloudflare',
-    help:
-      'Uses the Cloudflare account your blog is on. Needs the Workers Paid plan ($5 a month, 3,000 ' +
-      'emails included), the "Email Sending — Edit" permission on your token, and your domain added ' +
-      'under Email Service → Email Sending.',
-    url: 'https://dash.cloudflare.com/?to=/:account/email-service/sending',
-  },
-  {
-    id: 'resend',
-    label: 'Resend',
-    help:
-      'A separate email service, free for up to 100 emails a day and 3,000 a month. Make an account, ' +
-      'add your domain under Domains, then create an API key with sending access and paste it below.',
-    url: 'https://resend.com/domains',
-  },
-]
+const RESEND_DOMAINS = 'https://resend.com/domains'
+const RESEND_KEYS = 'https://resend.com/api-keys'
 
 /**
  * The newsletter: how it is sent, the box under posts, who is subscribed, and
@@ -53,7 +34,6 @@ export function Newsletter({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null)
 
   // sending setup
-  const [provider, setProvider] = useState<Provider>('cloudflare')
   const [fromEmail, setFromEmail] = useState('')
   const [fromName, setFromName] = useState('')
   const [resendKey, setResendKey] = useState('')
@@ -80,7 +60,6 @@ export function Newsletter({ onClose }: { onClose: () => void }) {
     if (!s.ok) return setError(s.message)
     setError(null)
     if (s.sender) {
-      setProvider(s.sender.provider)
       setFromEmail(s.sender.fromEmail)
       setFromName(s.sender.fromName)
     } else if (s.customDomain) {
@@ -106,7 +85,6 @@ export function Newsletter({ onClose }: { onClose: () => void }) {
     setSenderBusy(true)
     setSenderMsg(null)
     const res = await window.api.saveNewsletterSender({
-      provider,
       fromEmail,
       fromName,
       ...(resendKey.trim() ? { resendKey: resendKey.trim() } : {}),
@@ -195,7 +173,6 @@ export function Newsletter({ onClose }: { onClose: () => void }) {
   const ready = !!sender
   const count = status?.subscribers ?? 0
   const sending = !!progress || status?.sending != null
-  const info = PROVIDERS.find((p) => p.id === provider)!
 
   return (
     <div
@@ -221,31 +198,24 @@ export function Newsletter({ onClose }: { onClose: () => void }) {
           <>
             {/* ------------- sending ------------- */}
             <div className="card">
-              <strong style={{ fontSize: 13 }}>How emails are sent</strong>
+              <strong style={{ fontSize: 13 }}>Sending with Resend</strong>
               {!status.customDomain && (
                 <div className="banner warn" style={{ marginTop: 10, marginBottom: 0 }}>
                   Emails have to come from an address on your own domain, so add one under{' '}
                   <strong>Web addresses</strong> in Settings first.
                 </div>
               )}
-              <div className="row-split" style={{ marginTop: 10 }}>
-                {PROVIDERS.map((p) => (
-                  <label className="check" key={p.id}>
-                    <input
-                      type="radio"
-                      name="provider"
-                      checked={provider === p.id}
-                      onChange={() => setProvider(p.id)}
-                    />
-                    {p.label}
-                  </label>
-                ))}
-              </div>
               <p className="hint">
-                {info.help}{' '}
-                <a href="#" onClick={() => window.api.openExternal(info.url)}>
-                  Open {info.label} ↗
-                </a>
+                Emails are sent with Resend, a separate email service that is free for up to 100 emails
+                a day and 3,000 a month. Make a free account,{' '}
+                <a href="#" onClick={() => window.api.openExternal(RESEND_DOMAINS)}>
+                  add your domain ↗
+                </a>{' '}
+                and add the records it shows to your domain in Cloudflare, then{' '}
+                <a href="#" onClick={() => window.api.openExternal(RESEND_KEYS)}>
+                  create an API key ↗
+                </a>{' '}
+                with sending access and paste it below.
               </p>
               <div className="field" style={{ marginTop: 12 }}>
                 <label>Send from</label>
@@ -256,25 +226,25 @@ export function Newsletter({ onClose }: { onClose: () => void }) {
                   spellCheck={false}
                 />
               </div>
-              {provider === 'resend' && (
-                <>
-                  <div className="field">
-                    <label>Sender name</label>
-                    <input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="Alice's blog" />
-                  </div>
-                  <div className="field">
-                    <label>Resend API key</label>
-                    <input
-                      type="password"
-                      value={resendKey}
-                      onChange={(e) => setResendKey(e.target.value)}
-                      placeholder={sender?.hasResendKey ? 'Saved — paste a new one to replace it' : 're_…'}
-                      spellCheck={false}
-                    />
-                  </div>
-                </>
-              )}
-              <button className="primary" onClick={saveSender} disabled={senderBusy || !fromEmail.trim()}>
+              <div className="field">
+                <label>Sender name</label>
+                <input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="Alice's blog" />
+              </div>
+              <div className="field">
+                <label>Resend API key</label>
+                <input
+                  type="password"
+                  value={resendKey}
+                  onChange={(e) => setResendKey(e.target.value)}
+                  placeholder={sender?.hasResendKey ? 'Saved — paste a new one to replace it' : 're_…'}
+                  spellCheck={false}
+                />
+              </div>
+              <button
+                className="primary"
+                onClick={saveSender}
+                disabled={senderBusy || !fromEmail.trim() || (!sender?.hasResendKey && !resendKey.trim())}
+              >
                 {senderBusy ? <span className="spinner" /> : 'Save'}
               </button>
               {ready && (
@@ -380,7 +350,7 @@ export function Newsletter({ onClose }: { onClose: () => void }) {
                   Send…
                 </button>
               )}
-              {!ready && <p className="hint">Choose how emails are sent first.</p>}
+              {!ready && <p className="hint">Set up sending with Resend first.</p>}
               {sendMsg && <p className={`hint ${sendMsg.ok ? 'ok' : 'err'}`}>{sendMsg.text}</p>}
             </div>
 

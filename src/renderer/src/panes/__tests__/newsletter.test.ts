@@ -17,7 +17,7 @@ let calls: { name: string; args: unknown[] }[]
 
 const status = {
   ok: true,
-  sender: { provider: 'resend', fromEmail: 'news@alice.com', fromName: 'Alice', hasResendKey: true },
+  sender: { fromEmail: 'news@alice.com', fromName: 'Alice', hasResendKey: true },
   open: true,
   subscribers: 2,
   announced: [],

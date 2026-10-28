@@ -331,7 +331,7 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
                 : [
                     `${newsletter.subscribers} subscriber${newsletter.subscribers === 1 ? '' : 's'}`,
                     newsletter.open ? 'box shown under posts' : 'box not shown under posts',
-                    newsletter.sender ? `sent with ${newsletter.sender.provider === 'resend' ? 'Resend' : 'Cloudflare'}` : 'sending not set up',
+                    newsletter.sender ? `sent from ${newsletter.sender.fromEmail}` : 'Resend not set up yet',
                   ].join(' · ')}
           </p>
         </div>

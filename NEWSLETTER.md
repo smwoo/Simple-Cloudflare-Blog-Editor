@@ -22,17 +22,24 @@ the one thing a Cloudflare-only blog cannot do for free. Options considered
 | Status | Beta; new accounts start on a low daily quota | Generally available | GA | — |
 | Domain setup | Onboard the domain under Email Service → Email Sending (dashboard only) | Add the domain under Domains, then add its DNS records | — | — |
 
-Both usable options need the blog's own domain, on Cloudflare DNS for
-Cloudflare. Neither can send from `*.workers.dev`, so the newsletter is only
-useful once a custom domain is attached.
+**The app sends with Resend only.** Cloudflare Email Sending would keep the
+blog on one service, but it needs the Workers Paid plan, and the blog is meant
+to cost nothing. Resend's free plan covers a family blog with up to 100
+subscribers per post (the free limit is 100 emails a day). More subscribers
+than that still works: a send stops at the day's limit, and **Send the rest**
+carries on the next day. The cost is a second account.
 
-The app supports both, and the owner chooses in Settings → Newsletter:
+Resend cannot send from `*.workers.dev`, so the newsletter needs a custom
+domain attached first.
 
-- **Cloudflare** keeps to the "one service" principle and uses the token the app
-  already holds. Add **Account → Email Sending → Edit** to it. The cost is
-  the paid plan.
-- **Resend** keeps to the "costs nothing" principle for a family blog (under
-  100 subscribers per post). The cost is a second account.
+To set up Resend:
+
+1. Make a free account at [resend.com](https://resend.com).
+2. Under **Domains**, add the blog's domain, then add the DNS records Resend
+   shows to that domain in the Cloudflare dashboard (**DNS → Records**).
+3. Under **API Keys**, create a key with **Sending access**.
+4. In the app, open **Settings → Newsletter**. Enter the sending address (for
+   example `newsletter@alice.com`) and paste the key. Send yourself a test.
 
 ## Design
 
@@ -68,10 +75,10 @@ The app supports both, and the owner chooses in Settings → Newsletter:
   only post notices, each with a working unsubscribe link, but a confirmation
   email would stop it. That needs the Worker to send, through a `send_email` or
   secret binding.
-- **Bounce handling.** Addresses that bounce stay on the list. Both services
-  suppress repeat bounces on their side.
-- **Domain onboarding from the app.** Cloudflare documents no API for it yet.
-  Resend's could be automated with a Zone DNS Edit permission.
-- **Live testing.** Neither service has been exercised from the app against a
-  real account. The request shapes follow the documentation, and the first test
+- **Bounce handling.** Addresses that bounce stay on the list. Resend
+  suppresses repeat bounces on its side.
+- **Domain setup from the app.** Resend's domain records could be added
+  automatically if the token had the Zone DNS Edit permission.
+- **Live testing.** Resend has not been exercised from the app against a real
+  account. The request shape follows its documentation, and the first test
   email from Settings → Newsletter is the check.

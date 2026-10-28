@@ -91,13 +91,14 @@ When it finishes, your blog is live at an address like
   a comment you do not want, open the post and press **Comments**. Blogs set up
   before comments existed get them the next time you publish.
 - **Newsletter:** visitors can leave their email address at the end of a post to
-  hear about new ones. Set it up in **Settings** → **Newsletter**: choose how the
-  emails are sent (your Cloudflare account, or a free [Resend](https://resend.com)
-  account), turn on the box under posts, and send yourself a test. When you
-  publish, tick **Email subscribers** beside **Publish**. In the same Settings
-  screen you can write an email to all subscribers and remove addresses.
-  Every email has an unsubscribe link. This needs your own web address (see
-  below). See [NEWSLETTER.md](./NEWSLETTER.md) for the setup on each service.
+  hear about new ones. Emails are sent with a free [Resend](https://resend.com)
+  account (up to 100 emails a day). Set it up in **Settings** → **Newsletter**:
+  enter your sending address and Resend key, turn on the box under posts, and
+  send yourself a test. When you publish, tick **Email subscribers** beside
+  **Publish**. In the same Settings screen you can write an email to all
+  subscribers and remove addresses. Every email has an unsubscribe link. This
+  needs your own web address (see below). See [NEWSLETTER.md](./NEWSLETTER.md)
+  for the Resend setup.
 
 ## Good to know
 
@@ -204,7 +205,7 @@ src/main/        Electron main
   media/         ffmpeg wrapper, conversion pipeline, job queue
   site/          Hugo scaffold, build, preview server
   db/            config + secrets store, asset library
-  newsletter/    email rendering, Cloudflare + Resend senders, resumable send
+  newsletter/    email rendering, Resend sender, resumable send
   setup.ts       provisioning
   publish.ts     publish + source backup
   domain.ts      custom domain attachment

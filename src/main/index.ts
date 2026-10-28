@@ -36,14 +36,7 @@ import {
   createMailing,
   type Mailing,
 } from './cloudflare/newsletter.js'
-import {
-  CloudflareMailer,
-  ResendMailer,
-  MailError,
-  renderEmail,
-  type Mailer,
-  type Provider,
-} from './newsletter/mail.js'
+import { ResendMailer, MailError, renderEmail, type Mailer } from './newsletter/mail.js'
 import { sendMailing, type SendResult } from './newsletter/send.js'
 import { readSender, writeSender, type SenderSettings } from './newsletter/settings.js'
 import { provision, EXISTING_BLOG, type SetupInput } from './setup.js'
@@ -180,12 +173,8 @@ async function newsletterMailer(): Promise<{ mailer: Mailer; sender: SenderSetti
   const shared = sharedDb()
   if (!cf || !config || !shared) return { message: 'This blog is not set up yet.' }
   const sender = await readSender(shared).catch(() => null)
-  if (!sender) return { message: 'Choose how emails are sent first.' }
-  if (sender.provider === 'resend') {
-    if (!sender.resendKey) return { message: 'Paste your Resend API key first.' }
-    return { mailer: new ResendMailer(sender.resendKey, sender), sender }
-  }
-  return { mailer: new CloudflareMailer(cf, config.accountId, sender), sender }
+  if (!sender) return { message: 'Set up sending with Resend first.' }
+  return { mailer: new ResendMailer(sender.resendKey, sender), sender }
 }
 
 /** Whether the Worker online is new enough to take subscriptions. */
@@ -888,7 +877,6 @@ function registerIpc() {
       return {
         ok: true,
         sender: sender && {
-          provider: sender.provider,
           fromEmail: sender.fromEmail,
           fromName: sender.fromName ?? '',
           hasResendKey: !!sender.resendKey,
@@ -907,7 +895,7 @@ function registerIpc() {
 
   ipcMain.handle(
     'newsletter:saveSender',
-    async (_e, s: { provider: Provider; fromEmail: string; fromName?: string; resendKey?: string }) => {
+    async (_e, s: { fromEmail: string; fromName?: string; resendKey?: string }) => {
       const shared = sharedDb()
       if (!shared) return { ok: false, message: 'This blog is not ready for that yet.' }
       const fromEmail = s.fromEmail.trim()
@@ -915,11 +903,10 @@ function registerIpc() {
       if (/\.workers\.dev$/i.test(fromEmail)) {
         return { ok: false, message: 'Emails cannot come from a workers.dev address. Use an address on your own domain.' }
       }
-      if (s.provider === 'resend' && !s.resendKey?.trim() && !(await readSender(shared))?.resendKey) {
-        return { ok: false, message: 'Paste your Resend API key.' }
-      }
       try {
-        await writeSender(shared, { ...s, fromEmail })
+        if (!(await writeSender(shared, { ...s, fromEmail }))) {
+          return { ok: false, message: 'Paste your Resend API key.' }
+        }
         return { ok: true }
       } catch (e) {
         return { ok: false, message: 'The settings could not be saved just now.', log: String(e) }

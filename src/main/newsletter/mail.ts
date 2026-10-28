@@ -1,31 +1,22 @@
 /**
- * Writing a newsletter email and handing it to a sending service.
+ * Writing a newsletter email and handing it to Resend.
  *
- * Two services, because neither is the obvious choice:
+ * Resend is free for 100 emails a day and 3,000 a month, and takes 100 emails
+ * per request. Cloudflare's own Email Sending was the other option, but it
+ * needs the Workers Paid plan, and the blog is meant to cost nothing (see
+ * NEWSLETTER.md).
  *
- * - **Cloudflare Email Sending** keeps the blog on one service and uses the
- *   token the app already holds. It needs the Workers Paid plan ($5 a month,
- *   3,000 emails included), was in beta when this was written, sends one
- *   email per request, and starts new accounts on a low daily limit.
- * - **Resend** is free up to 100 emails a day and 3,000 a month, and takes 100
- *   emails per request, but it is a second account and a key to paste in.
- *
- * Both need the sending address's domain set up with the service first, which
- * is done in their dashboards. Sending from a workers.dev address is not
- * possible with either.
+ * The sending address's domain has to be verified in Resend first, which is
+ * done in its dashboard. A workers.dev address cannot send.
  *
  * Each email is addressed to one subscriber, never a list: it carries that
  * person's own unsubscribe link, and nobody sees anyone else's address.
  */
 import { createHash } from 'node:crypto'
-import { CloudflareError, type CloudflareClient } from '../cloudflare/api.js'
-
-export type Provider = 'cloudflare' | 'resend'
 
 export interface Sender {
-  provider: Provider
   fromEmail: string
-  /** Shown as the sender, e.g. "Alice's blog". Resend only: Cloudflare's API takes a bare address. */
+  /** Shown as the sender, e.g. "Alice's blog". */
   fromName?: string
 }
 
@@ -142,75 +133,6 @@ export function renderEmail(c: Content, to: string, unsubscribeUrl: string): Out
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     },
   }
-}
-
-// ---------------------------------------------------------------- Cloudflare
-
-const CF_SETUP: Record<number, string> = {
-  10101: 'Cloudflare did not accept the token for sending email.',
-  10102: 'Your Cloudflare token cannot send email. Add the "Email Sending — Edit" permission to it.',
-  10105: 'Sending email from Cloudflare needs the Workers Paid plan on your Cloudflare account.',
-  10203: 'Email sending is turned off for this address in Cloudflare. Check Email Service in the dashboard.',
-  10207: 'Cloudflare has paused email sending for your account. Check Email Service in the dashboard.',
-}
-
-export class CloudflareMailer implements Mailer {
-  readonly batchSize = 1
-  readonly parallel = 4
-
-  constructor(
-    private cf: CloudflareClient,
-    private accountId: string,
-    private sender: Sender,
-  ) {}
-
-  async send(batch: OutgoingEmail[]): Promise<void> {
-    for (const email of batch) {
-      try {
-        await this.cf.request(`/accounts/${this.accountId}/email/sending/send`, {
-          method: 'POST',
-          body: JSON.stringify({
-            from: this.sender.fromEmail,
-            to: email.to,
-            subject: email.subject,
-            html: email.html,
-            text: email.text,
-            headers: email.headers,
-          }),
-        })
-      } catch (e) {
-        throw cloudflareMailError(e, this.sender.fromEmail)
-      }
-    }
-  }
-}
-
-export function cloudflareMailError(e: unknown, from: string): MailError {
-  if (!(e instanceof CloudflareError)) {
-    return new MailError('Cloudflare could not be reached. Check the internet connection.', 'failed', String(e))
-  }
-  const log = `${e.status} ${e.code ?? ''} ${e.message}`
-  if (e.status === 429) return new MailError('Cloudflare is not taking more emails just now.', 'busy', log)
-  if (e.code && CF_SETUP[e.code]) return new MailError(CF_SETUP[e.code], 'setup', log)
-  if (e.status === 401 || e.status === 403) {
-    return new MailError(
-      `Cloudflare would not send from ${from}. Check the address's domain is set up under ` +
-        `Email Service → Email Sending, and the token has "Email Sending — Edit".`,
-      'setup',
-      log,
-    )
-  }
-  if (/limit|quota/i.test(e.message)) {
-    return new MailError('Cloudflare\'s daily email limit for your account is used up.', 'limit', log)
-  }
-  if (e.status === 400) {
-    return new MailError(
-      `Cloudflare would not send this email. Check ${from} is on a domain set up for Email Sending.`,
-      'setup',
-      log,
-    )
-  }
-  return new MailError('Cloudflare could not send the email just now.', 'failed', log)
 }
 
 // ---------------------------------------------------------------- Resend

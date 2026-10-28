@@ -17,9 +17,8 @@ import {
   setOpen,
 } from '../../cloudflare/newsletter.js'
 import { sendMailing } from '../send.js'
-import { MailError, renderEmail, resendMailError, cloudflareMailError, ResendMailer, type Mailer, type OutgoingEmail } from '../mail.js'
+import { MailError, renderEmail, resendMailError, ResendMailer, type Mailer, type OutgoingEmail } from '../mail.js'
 import { readSender, writeSender } from '../settings.js'
-import { CloudflareError } from '../../cloudflare/api.js'
 
 let d1: FakeD1
 
@@ -195,7 +194,7 @@ describe('the email', () => {
 describe('sending services', () => {
   it('sends a Resend batch with the key, sender name and idempotency key', async () => {
     let req: { url: string; init: RequestInit } | null = null
-    const mailer = new ResendMailer('re_k', { provider: 'resend', fromEmail: 'n@al.com', fromName: 'Al "Blog"' }, async (url, init) => {
+    const mailer = new ResendMailer('re_k', { fromEmail: 'n@al.com', fromName: 'Al "Blog"' }, async (url, init) => {
       req = { url, init }
       return new Response('{"data":[]}', { status: 200 })
     })
@@ -216,21 +215,19 @@ describe('sending services', () => {
     expect(unverified.kind).toBe('setup')
     expect(unverified.message).toMatch(/not verified in Resend/)
 
-    expect(cloudflareMailError(new CloudflareError('throttled', 429, 10004), 'n@al.com').kind).toBe('busy')
-    const noPlan = cloudflareMailError(new CloudflareError('x', 403, 10105), 'n@al.com')
-    expect(noPlan).toMatchObject({ kind: 'setup' })
-    expect(noPlan.message).toMatch(/Workers Paid/)
-    expect(cloudflareMailError(new CloudflareError('x', 403, 10102), 'n@al.com').message).toMatch(/Email Sending — Edit/)
+    expect(resendMailError(401, { name: 'restricted_api_key' }, 'n@al.com').kind).toBe('setup')
   })
 })
 
 describe('sending settings', () => {
-  it('keeps the saved Resend key when it is not given again', async () => {
+  it('needs a Resend key, and keeps the saved one when it is not given again', async () => {
     expect(await readSender(d1)).toBeNull()
-    await writeSender(d1, { provider: 'resend', fromEmail: ' n@al.com ', fromName: 'Al', resendKey: 're_1' })
-    await writeSender(d1, { provider: 'resend', fromEmail: 'news@al.com', fromName: '' })
-    expect(await readSender(d1)).toEqual({ provider: 'resend', fromEmail: 'news@al.com', resendKey: 're_1' })
-    await writeSender(d1, { provider: 'cloudflare', fromEmail: 'news@al.com' })
-    expect((await readSender(d1))?.provider).toBe('cloudflare')
+    expect(await writeSender(d1, { fromEmail: 'n@al.com' })).toBe(false)
+    expect(await readSender(d1)).toBeNull()
+    expect(await writeSender(d1, { fromEmail: ' n@al.com ', fromName: 'Al', resendKey: 're_1' })).toBe(true)
+    expect(await writeSender(d1, { fromEmail: 'news@al.com', fromName: '' })).toBe(true)
+    expect(await readSender(d1)).toEqual({ fromEmail: 'news@al.com', resendKey: 're_1' })
+    await writeSender(d1, { fromEmail: 'news@al.com', resendKey: 're_2' })
+    expect((await readSender(d1))?.resendKey).toBe('re_2')
   })
 })

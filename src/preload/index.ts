@@ -65,7 +65,7 @@ const api = {
   // the newsletter: subscribers, how it is sent, and sending
   newsletterStatus: () => invoke<any>('newsletter:status'),
   /** The Resend key goes in only; leaving it out keeps the saved one. */
-  saveNewsletterSender: (s: { provider: 'cloudflare' | 'resend'; fromEmail: string; fromName?: string; resendKey?: string }) =>
+  saveNewsletterSender: (s: { fromEmail: string; fromName?: string; resendKey?: string }) =>
     invoke<any>('newsletter:saveSender', s),
   sendTestEmail: (to: string) => invoke<any>('newsletter:test', to),
   setSubscribeOpen: (open: boolean) => invoke<any>('newsletter:setOpen', open),
