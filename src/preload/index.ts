@@ -35,6 +35,9 @@ const api = {
     invoke<any>('connect:run', args),
   recoverBlog: (args: { token: string; blog: any; keys: any }) => invoke<any>('connect:recover', args),
   onConnectProgress: (fn: (detail: string) => void) => on('connect:progress', fn),
+  /** Set this computer's copy of the blog aside and restart on setup. */
+  disconnect: (force: boolean) =>
+    invoke<{ ok: boolean; unsent?: number; uploading?: number }>('app:disconnect', force),
 
   // sharing with other computers
   syncStatus: () => invoke<any>('sync:status'),

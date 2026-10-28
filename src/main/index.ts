@@ -47,6 +47,7 @@ import {
   setBaseUrl,
 } from './site/hugo.js'
 import { referencedKeys } from '../shared/markdown.js'
+import { requestDisconnect, applyPendingDisconnect } from './disconnect.js'
 import { posterKey, type Post, type BlogConfig, type Asset, type Secrets } from '../shared/types.js'
 
 // A separate data folder: a smoke run that must not touch the real blog, or
@@ -460,6 +461,24 @@ function registerIpc() {
       version: app.getVersion(),
       sync: syncStatus(),
     }
+  })
+
+  /**
+   * Disconnect this computer and restart on setup. Unsent changes and
+   * unfinished uploads are reported first unless `force`; either way nothing
+   * is deleted — the folder is set aside at the restart.
+   */
+  ipcMain.handle('app:disconnect', async (_e, force: boolean) => {
+    await flushSync()
+    const unsent = sync?.pending ?? 0
+    const uploading = queue.pendingCount
+    if (!force && (unsent || uploading)) return { ok: false, unsent, uploading }
+    await requestDisconnect(app.getPath('userData'))
+    // exit() skips before-quit, which is where the preview server stops.
+    preview.stop()
+    app.relaunch()
+    app.exit(0)
+    return { ok: true }
   })
 
   ipcMain.handle('setup:checkToken', async (_e, token: string, accountId?: string) => {
@@ -894,6 +913,8 @@ function registerIpc() {
 
 app.whenReady().then(async () => {
   R2.requestHandler = createFetchHandler((url, init) => net.fetch(url, init))
+  // Before anything opens the blog folder: a disconnect sets it aside.
+  await applyPendingDisconnect(app.getPath('userData'), dataDir())
   store = await Store.open(dataDir(), safeStorage)
   library = await Library.open(store.paths().library)
   const paths = store.paths()

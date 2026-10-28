@@ -35,6 +35,17 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
   const [passwordMsg, setPasswordMsg] = useState<string | null>(null)
   const [sync, setSync] = useState<any>(null)
   const [syncBusy, setSyncBusy] = useState(false)
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  const [disconnectBusy, setDisconnectBusy] = useState(false)
+  const [unfinished, setUnfinished] = useState<{ unsent: number; uploading: number } | null>(null)
+
+  /** On success the app restarts, so only the "not yet" answer comes back. */
+  const disconnect = async (force: boolean) => {
+    setDisconnectBusy(true)
+    const res = await window.api.disconnect(force)
+    if (!res.ok) setUnfinished({ unsent: res.unsent ?? 0, uploading: res.uploading ?? 0 })
+    setDisconnectBusy(false)
+  }
 
   useEffect(() => {
     window.api.syncStatus().then(setSync)
@@ -297,6 +308,59 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
             </button>
           </div>
           {domainMsg && <p className="hint">{domainMsg}</p>}
+        </div>
+
+        <div className="card">
+          <strong style={{ fontSize: 13 }}>This computer</strong>
+          <p className="hint">
+            Disconnect to use this computer with a different blog. The blog itself is not touched
+            {sync?.shared && <>, nor are your other computers</>}. This computer's copy — drafts and
+            original photos included — is set aside in a folder next to the app's data, not deleted,
+            and Blog Editor restarts on setup.
+          </p>
+          {unfinished ? (
+            <>
+              <div className="banner warn" style={{ marginBottom: 8 }}>
+                {[
+                  unfinished.unsent > 0 &&
+                    `${unfinished.unsent} change${unfinished.unsent === 1 ? ' has' : 's have'} not reached your other computers yet`,
+                  unfinished.uploading > 0 &&
+                    `${unfinished.uploading} photo${unfinished.uploading === 1 ? ' is' : 's are'} still uploading`,
+                ]
+                  .filter(Boolean)
+                  .join(', and ')}
+                . Wait a moment and try again, or disconnect anyway — the set-aside folder keeps them.
+              </div>
+              <div className="row-split">
+                <button className="danger" onClick={() => disconnect(true)} disabled={disconnectBusy}>
+                  Disconnect anyway
+                </button>
+                <button className="ghost" onClick={() => disconnect(false)} disabled={disconnectBusy}>
+                  {disconnectBusy ? <span className="spinner" /> : 'Try again'}
+                </button>
+                <button
+                  className="ghost"
+                  onClick={() => (setUnfinished(null), setConfirmDisconnect(false))}
+                  disabled={disconnectBusy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : confirmDisconnect ? (
+            <div className="row-split">
+              <button className="danger" onClick={() => disconnect(false)} disabled={disconnectBusy}>
+                {disconnectBusy ? <span className="spinner" /> : 'Disconnect and restart'}
+              </button>
+              <button className="ghost" onClick={() => setConfirmDisconnect(false)} disabled={disconnectBusy}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button className="ghost" onClick={() => setConfirmDisconnect(true)}>
+              Disconnect…
+            </button>
+          )}
         </div>
 
         <div className="actions">

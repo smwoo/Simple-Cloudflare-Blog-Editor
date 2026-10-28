@@ -102,6 +102,11 @@ When it finishes, your blog is live at an address like
   the blog changes. Photos added on the first computer show straight from your
   blog, so nothing big is downloaded. Changes on either computer appear on the
   other; if the same post is changed on both at once, both versions are kept.
+- **Switching to a different blog.** **Settings** → **Disconnect…** restarts the
+  app on setup. The blog stays online and your other computers are unaffected.
+  This computer's copy is set aside as a `blog-disconnected-…` folder in the
+  app's data folder, not deleted; rename it back to `blog` (with the app closed)
+  to return to it.
 - **Updating from an older version.** Blogs set up before version 0.2 need the
   **D1 — Edit** permission added to their Cloudflare token (Cloudflare → My
   Profile → API Tokens → Edit). The app asks for it, then gets the blog ready
