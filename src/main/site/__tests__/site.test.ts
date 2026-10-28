@@ -22,6 +22,7 @@ import {
   siteOverlay,
   passwordHash,
 } from '../hugo.js'
+import { Window } from 'happy-dom'
 import type { Post, BlogConfig, PMNode } from '../../../shared/types.js'
 
 const config: BlogConfig = {
@@ -183,6 +184,71 @@ describe('hugo build', () => {
     expect(html).toContain('Nov 2026')
     expect(html).toContain('Island Time')
     expect(html).toContain("Alice's Trip Log")
+  })
+
+  it('gives each post a comment section keyed by its slug, hidden until it loads', async () => {
+    if (!hugoOk) return
+    await build(dir)
+    const html = await readFile(path.join(dir, 'public', 'posts', 'nov-2026', 'index.html'), 'utf8')
+    expect(html).toMatch(/<section class=comments id=comments data-post=nov-2026 hidden>/)
+    expect(html).toContain('/api/comments')
+  })
+
+  it('the comment script shows threads, replies within them, and hides when comments are off', async () => {
+    if (!hugoOk) return
+    await build(dir)
+    const html = await readFile(path.join(dir, 'public', 'posts', 'nov-2026', 'index.html'), 'utf8')
+    const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+      .map((m) => m[1])
+      .find((s) => s.includes('/api/comments'))!
+
+    const open = async (answer: (url: string, init?: RequestInit) => Response) => {
+      const window = new Window()
+      window.document.write(html.replace(/<script>[\s\S]*?<\/script>/g, ''))
+      const sent: any[] = []
+      const fetch = async (url: string, init?: RequestInit) => {
+        if (init?.body) sent.push(JSON.parse(init.body as string))
+        return answer(url, init)
+      }
+      new Function('document', 'fetch', 'localStorage', script)(window.document, fetch, window.localStorage)
+      await new Promise((r) => setTimeout(r, 20))
+      return { doc: window.document, sent, window }
+    }
+
+    const json = (data: object, status = 200) => new Response(JSON.stringify(data), { status })
+    const at = Date.UTC(2026, 10, 30)
+    const { doc, sent, window } = await open((_url, init) =>
+      init?.method === 'POST'
+        ? json({ comment: { id: 4, parent: 1, name: 'Di', body: 'Me too', at } }, 201)
+        : json({
+            comments: [
+              { id: 1, parent: null, name: 'Bob', body: '<b>Hi</b>', at },
+              { id: 2, parent: null, name: 'Cy', body: 'Lovely', at },
+              { id: 3, parent: 1, name: 'Ann', body: 'Thanks!', at },
+            ],
+          }),
+    )
+    const section = doc.getElementById('comments') as any
+    expect(section.hidden).toBe(false)
+    const threads = [...section.querySelectorAll('.thread')]
+    expect(threads.map((t) => t.querySelector('.comment strong')!.textContent)).toEqual(['Bob', 'Cy'])
+    expect(threads[0].querySelector('.comment p')!.innerHTML).toBe('&lt;b&gt;Hi&lt;/b&gt;')
+    expect([...threads[0].querySelectorAll('.replies strong')].map((e) => e.textContent)).toEqual(['Ann'])
+
+    // Replying inside a thread posts against its top comment and appends there.
+    ;(threads[0].querySelector('button.reply') as any).click()
+    const form = threads[0].querySelector('form') as any
+    form.querySelector('[name=name]').value = 'Di'
+    form.querySelector('[name=body]').value = 'Me too'
+    form.dispatchEvent(new window.Event('submit', { cancelable: true }))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(sent).toEqual([{ post: 'nov-2026', parent: 1, name: 'Di', body: 'Me too', website: '' }])
+    expect([...threads[0].querySelectorAll('.replies strong')].map((e) => e.textContent)).toEqual(['Ann', 'Di'])
+    expect(threads[0].querySelector('form')).toBeNull()
+
+    // The app's preview, or a blog without the comments database.
+    const off = await open(() => new Response('Not found', { status: 404 }))
+    expect((off.doc.getElementById('comments') as any).hidden).toBe(true)
   })
 
   it('excludes drafts from a normal build but keeps them on disk', async () => {

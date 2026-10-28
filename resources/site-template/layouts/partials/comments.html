@@ -1,0 +1,87 @@
+{{- /*
+  Comments under a post, read and written through the Worker's /api/comments.
+  The section stays hidden until the list loads, so the app's preview and a
+  blog without the comments database show nothing rather than a broken form.
+  Comment text is only ever set as textContent, never as HTML.
+*/ -}}
+<section class="comments" id="comments" data-post="{{ .File.ContentBaseName }}" hidden>
+  <h2>Comments</h2>
+  <div class="threads"></div>
+  <p class="none">No comments yet.</p>
+  <h3>Leave a comment</h3>
+</section>
+<template id="comment-form">
+  <form class="comment-form">
+    <input name="name" placeholder="Your name" maxlength="60" required autocomplete="name">
+    <textarea name="body" placeholder="Your comment" maxlength="2000" rows="4" required></textarea>
+    <input name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <div class="row"><button type="submit">Post</button><span class="err" role="alert"></span></div>
+  </form>
+</template>
+<script>
+(function(){
+  var box=document.getElementById('comments');
+  if(!box)return;
+  var post=box.getAttribute('data-post'),threads=box.querySelector('.threads'),none=box.querySelector('.none');
+  var tpl=document.getElementById('comment-form');
+
+  function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+  function when(ms){return new Date(ms).toLocaleDateString(undefined,{day:'numeric',month:'long',year:'numeric'})}
+  function savedName(){try{return localStorage.getItem('comment-name')||''}catch(e){return ''}}
+
+  function commentEl(c){
+    var d=el('div','comment');
+    var meta=el('div','meta');meta.appendChild(el('strong',null,c.name));meta.appendChild(el('span',null,' · '+when(c.at)));
+    d.appendChild(meta);d.appendChild(el('p',null,c.body));
+    return d;
+  }
+
+  // One thread per top comment: the comment, its replies, then a reply button.
+  function threadEl(c){
+    var t=el('div','thread');t.setAttribute('data-id',c.id);
+    t.appendChild(commentEl(c));
+    var replies=el('div','replies');t.appendChild(replies);
+    var btn=el('button','reply','Reply');btn.type='button';
+    btn.addEventListener('click',function(){
+      btn.hidden=true;
+      var f=form(c.id,function(r){replies.appendChild(commentEl(r));f.remove();btn.hidden=false});
+      t.appendChild(f);f.querySelector(savedName()?'textarea':'input').focus();
+    });
+    t.appendChild(btn);
+    return t;
+  }
+
+  function addThread(c){threads.appendChild(threadEl(c));none.hidden=true}
+
+  function form(parent,done){
+    var f=tpl.content.firstElementChild.cloneNode(true),err=f.querySelector('.err'),go=f.querySelector('button');
+    f.elements.name.value=savedName();
+    f.addEventListener('submit',function(e){
+      e.preventDefault();err.textContent='';go.disabled=true;
+      var name=f.elements.name.value;
+      try{localStorage.setItem('comment-name',name.trim())}catch(x){}
+      fetch('/api/comments',{method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({post:post,parent:parent,name:name,body:f.elements.body.value,website:f.elements.website.value})})
+        .then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'');return j})})
+        .then(function(j){f.elements.body.value='';if(j.comment)done(j.comment)})
+        .catch(function(x){err.textContent=x.message||'Your comment could not be posted. Please try again.'})
+        .then(function(){go.disabled=false});
+    });
+    return f;
+  }
+
+  fetch('/api/comments?post='+encodeURIComponent(post))
+    .then(function(r){if(!r.ok)throw 0;return r.json()})
+    .then(function(j){
+      var tops={},list=j.comments||[];
+      list.forEach(function(c){
+        if(c.parent==null){var t=threadEl(c);tops[c.id]=t;threads.appendChild(t)}
+        else if(tops[c.parent])tops[c.parent].querySelector('.replies').appendChild(commentEl(c));
+      });
+      none.hidden=list.length>0;
+      box.appendChild(form(null,addThread));
+      box.hidden=false;
+    })
+    .catch(function(){});
+})();
+</script>

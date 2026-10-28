@@ -194,3 +194,11 @@ iframe.preview{border:0;width:100%;height:100%;background:#fff}
           padding:0;color:var(--muted);border-radius:var(--radius)}
 .icon-btn:hover:not(:disabled){color:var(--fg);background:var(--bg)}
 a{color:var(--accent)}
+.comments-modal{max-width:560px}
+.comment-thread{border-top:1px solid var(--line);padding:10px 0}
+.comment-replies{margin-left:14px;padding-left:12px;border-left:2px solid var(--line)}
+.comment-meta{display:flex;align-items:center;gap:4px;font-size:12.5px;color:var(--muted)}
+.comment-meta strong{color:var(--fg)}
+.comment-meta .grow{flex:1}
+.comment-meta button{font-size:12px;padding:1px 6px}
+.comment-item p{margin:2px 0 6px;font-size:13.5px;white-space:pre-wrap;overflow-wrap:anywhere}

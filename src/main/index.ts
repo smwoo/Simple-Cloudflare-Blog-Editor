@@ -13,6 +13,12 @@ import { CloudflareClient, CloudflareError } from './cloudflare/api.js'
 import { R2 } from './cloudflare/r2.js'
 import { RestD1, listDatabases } from './cloudflare/d1.js'
 import { createFetchHandler } from './cloudflare/fetchHandler.js'
+import {
+  findCommentsDatabase,
+  listComments,
+  deleteComment,
+  deletePostComments,
+} from './cloudflare/comments.js'
 import { provision, EXISTING_BLOG, type SetupInput } from './setup.js'
 import {
   publish,
@@ -88,6 +94,7 @@ function send(channel: string, payload: unknown) {
 async function connect(): Promise<void> {
   config = await store.readConfig()
   const secrets = await store.readSecrets()
+  commentsDbId = null
   if (!config || !secrets) {
     cf = null
     r2 = null
@@ -103,6 +110,17 @@ async function connect(): Promise<void> {
         statePath: statePath(),
       })
     : null
+}
+
+/**
+ * The comments database, or null before any deploy has made it. Looked up by
+ * name rather than stored, so every computer finds it with no setup.
+ */
+let commentsDbId: string | null = null
+async function commentsDb(): Promise<RestD1 | null> {
+  if (!cf || !config) return null
+  commentsDbId ??= await findCommentsDatabase(cf, config.accountId, config.name)
+  return commentsDbId ? new RestD1(cf, config.accountId, commentsDbId) : null
 }
 
 function siteOrigin(): string | null {
@@ -709,7 +727,31 @@ function registerIpc() {
       for (const key of res.removedKeys) await sync.assetRemoved(key)
       await flushSync()
     }
+    // A later post with the same name must not inherit these.
+    if (res.ok) {
+      const db = await commentsDb().catch(() => null)
+      if (db) await deletePostComments(db, args.slug).catch(() => {})
+    }
     return res
+  })
+
+  // ---- comments
+  ipcMain.handle('comments:list', async (_e, slug: string) => {
+    try {
+      const db = await commentsDb()
+      return { ok: true, comments: db ? await listComments(db, slug) : [] }
+    } catch (e) {
+      return { ok: false, message: 'Comments could not be loaded just now.', log: String(e) }
+    }
+  })
+  ipcMain.handle('comments:delete', async (_e, id: number) => {
+    try {
+      const db = await commentsDb()
+      if (!db) return { ok: false, message: 'Comments could not be reached just now.' }
+      return { ok: true, removed: await deleteComment(db, id) }
+    } catch (e) {
+      return { ok: false, message: 'The comment could not be deleted just now.', log: String(e) }
+    }
   })
 
   // ---- media

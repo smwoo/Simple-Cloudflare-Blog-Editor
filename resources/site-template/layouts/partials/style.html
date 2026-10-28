@@ -41,4 +41,22 @@ figcaption,.caption{color:var(--muted);font-size:.87rem;text-align:center;margin
 #lb button:hover{opacity:1}
 #lb .prev{left:0}#lb .next{right:0}
 #lb .close{top:0;right:0;transform:none;padding:10px 18px;line-height:1}
+.comments{margin-top:3.5rem;padding-top:.5rem;border-top:1px solid var(--line)}
+.comments[hidden]{display:none}
+.comments .none{color:var(--muted)}
+.thread{padding:14px 0;border-bottom:1px solid var(--line)}
+.comment .meta{font-family:ui-sans-serif,system-ui,sans-serif;font-size:.85rem;color:var(--muted)}
+.comment .meta strong{color:var(--fg);font-weight:600}
+.comment p{margin:.2rem 0 .6rem;white-space:pre-wrap;overflow-wrap:anywhere}
+.replies{margin-left:18px;padding-left:14px;border-left:2px solid var(--line)}
+.comments button{font:inherit;font-family:ui-sans-serif,system-ui,sans-serif;font-size:.9rem;cursor:pointer;border-radius:var(--radius)}
+.comments .reply{background:none;border:0;padding:0;color:var(--accent)}
+.comment-form{display:flex;flex-direction:column;gap:8px;margin:10px 0 0}
+.comment-form input,.comment-form textarea{font:inherit;font-size:1rem;padding:9px 12px;border-radius:var(--radius);border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%}
+.comment-form input[name=name]{max-width:18rem}
+.comment-form .hp{position:absolute;left:-9999px;width:1px;height:1px}
+.comment-form .row{display:flex;gap:12px;align-items:center}
+.comment-form button[type=submit]{padding:8px 16px;background:var(--accent);border:1px solid var(--accent);color:#fff}
+.comment-form button:disabled{opacity:.6}
+.comment-form .err{color:#c2410c;font-size:.88rem;font-family:ui-sans-serif,system-ui,sans-serif}
 </style>

@@ -7,6 +7,7 @@ import { GroupDialog } from './panes/GroupDialog.js'
 import { Settings } from './panes/Settings.js'
 import { DeleteDialog } from './panes/DeleteDialog.js'
 import { CoverPicker } from './panes/CoverPicker.js'
+import { CommentsDialog } from './panes/CommentsDialog.js'
 import { assetStore, useAssets } from './editor/assetStore.js'
 import { appendToGallery, insertAssets } from './editor/insert.js'
 import type { Post, PMNode, BlogConfig } from '../../shared/types.js'
@@ -40,6 +41,7 @@ export function App() {
   const [banner, setBanner] = useState<{ kind: 'ok' | 'err' | 'warn'; text: string; log?: string } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [showComments, setShowComments] = useState(false)
   const [previewOrigin, setPreviewOrigin] = useState<string | null>(null)
   const [sync, setSync] = useState<any>(null)
   /** Bumped when another computer's version replaces the open post, to reload the editor. */
@@ -499,6 +501,7 @@ export function App() {
                   Back to draft
                 </button>
               )}
+              {!current.frontMatter.draft && <button onClick={() => setShowComments(true)}>Comments</button>}
               <button onClick={togglePreview}>Preview</button>
               <button className="primary" onClick={doPublish} disabled={!!publishing}>
                 {publishing ?? (current.frontMatter.draft ? 'Publish' : 'Update')}
@@ -531,6 +534,13 @@ export function App() {
           mediaCount={assets.filter((a) => a.postSlug === current.slug).length}
           onConfirm={doDelete}
           onCancel={() => setConfirmDelete(false)}
+        />
+      )}
+      {showComments && current && (
+        <CommentsDialog
+          slug={current.slug}
+          title={current.frontMatter.title}
+          onClose={() => setShowComments(false)}
         />
       )}
       {showSettings && <Settings config={config} onClose={() => setShowSettings(false)} />}

@@ -86,6 +86,10 @@ When it finishes, your blog is live at an address like
   the web automatically; your originals are kept untouched on your computer.
 - **Preview** shows the post as it will look online.
 - **Publish** puts the post on your blog. **Update** republishes changes.
+- **Comments:** visitors can leave a comment under any published post with just
+  their name, and reply to a comment to start a conversation under it. To remove
+  a comment you do not want, open the post and press **Comments**. Blogs set up
+  before comments existed get them the next time you publish.
 
 ## Good to know
 

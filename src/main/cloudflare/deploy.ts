@@ -17,13 +17,116 @@ import { createHash } from 'node:crypto'
 import path from 'node:path'
 import type { CloudflareClient } from './api.js'
 import { contentTypeFor } from './r2.js'
+import { ensureCommentsDatabase } from './comments.js'
 
 const COMPATIBILITY_DATE = '2026-07-26'
 
-/** The Worker: static assets, plus /media/* read from the R2 binding. */
-export const WORKER_SOURCE = `export default {
+/**
+ * The Worker: static assets, /media/* read from the R2 binding, and
+ * /api/comments backed by the comments database (see comments.ts).
+ *
+ * Comment rules enforced here, since the page's script is only a courtesy:
+ * the post must be a published page, a reply always joins the top comment's
+ * thread, lengths are capped, and one address can post a few per ten minutes.
+ * POST demands a JSON body, which a form on another site cannot send without
+ * a CORS preflight this Worker never answers.
+ */
+export const WORKER_SOURCE = `const MAX_NAME = 60
+const MAX_BODY = 2000
+const RATE_WINDOW_MS = 10 * 60 * 1000
+const RATE_MAX = 5
+const SLUG = /^[a-z0-9][a-z0-9-]{0,119}$/
+
+function json(data, status) {
+  return new Response(JSON.stringify(data), {
+    status: status || 200,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  })
+}
+
+async function ipHash(req) {
+  const ip = req.headers.get('cf-connecting-ip') || ''
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('comments:' + ip))
+  return [...new Uint8Array(digest)].slice(0, 12).map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function comments(req, env, url) {
+  if (!env.COMMENTS) return json({ error: 'Comments are not available.' }, 503)
+  const db = env.COMMENTS
+
+  if (req.method === 'GET') {
+    const post = url.searchParams.get('post') || ''
+    if (!SLUG.test(post)) return json({ error: 'Unknown post.' }, 400)
+    const { results } = await db
+      .prepare('SELECT id, parent_id AS parent, name, body, created_at AS at FROM comments WHERE post = ? ORDER BY id')
+      .bind(post)
+      .all()
+    return json({ comments: results })
+  }
+
+  if (req.method !== 'POST') return json({ error: 'Method not allowed.' }, 405)
+  if (!/^application\\/json/i.test(req.headers.get('content-type') || '')) {
+    return json({ error: 'Expected JSON.' }, 415)
+  }
+  const raw = await req.text()
+  if (raw.length > 16000) return json({ error: 'That comment is too long.' }, 413)
+  let input
+  try {
+    input = JSON.parse(raw)
+  } catch (e) {
+    return json({ error: 'Expected JSON.' }, 400)
+  }
+  if (!input || typeof input !== 'object') return json({ error: 'Expected JSON.' }, 400)
+
+  // A field people never see. Bots fill it in; pretend it worked.
+  if (input.website) return json({ ok: true }, 201)
+
+  const post = typeof input.post === 'string' ? input.post : ''
+  const name = typeof input.name === 'string' ? input.name.trim().replace(/\\s+/g, ' ') : ''
+  const body = typeof input.body === 'string' ? input.body.trim().replace(/\\r\\n?/g, '\\n') : ''
+  if (!SLUG.test(post)) return json({ error: 'Unknown post.' }, 400)
+  if (!name) return json({ error: 'Please add your name.' }, 400)
+  if (!body) return json({ error: 'Please write a comment.' }, 400)
+  if (name.length > MAX_NAME) return json({ error: 'Please use a shorter name.' }, 400)
+  if (body.length > MAX_BODY) return json({ error: 'Please keep comments under ' + MAX_BODY + ' characters.' }, 400)
+
+  // Only published posts take comments: drafts have no page.
+  const page = await env.ASSETS.fetch(new Request(new URL('/posts/' + post + '/', url), { method: 'GET' }))
+  if (!page.ok) return json({ error: 'Unknown post.' }, 404)
+
+  let parent = null
+  if (input.parent != null) {
+    const id = Number(input.parent)
+    if (!Number.isInteger(id)) return json({ error: 'That comment no longer exists.' }, 404)
+    const row = await db.prepare('SELECT id, parent_id, post FROM comments WHERE id = ?').bind(id).first()
+    if (!row || row.post !== post) return json({ error: 'That comment no longer exists.' }, 404)
+    parent = row.parent_id == null ? row.id : row.parent_id
+  }
+
+  const now = Date.now()
+  const hash = await ipHash(req)
+  const recent = await db
+    .prepare('SELECT COUNT(*) AS n FROM comments WHERE ip_hash = ? AND created_at > ?')
+    .bind(hash, now - RATE_WINDOW_MS)
+    .first()
+  if (recent && recent.n >= RATE_MAX) {
+    return json({ error: 'You have commented a lot just now. Please wait a few minutes.' }, 429)
+  }
+
+  const row = await db
+    .prepare(
+      'INSERT INTO comments (post, parent_id, name, body, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?) ' +
+        'RETURNING id, parent_id AS parent, name, body, created_at AS at',
+    )
+    .bind(post, parent, name, body, hash, now)
+    .first()
+  return json({ comment: row }, 201)
+}
+
+export default {
   async fetch(req, env) {
     const url = new URL(req.url)
+    if (url.pathname === '/api/comments') return comments(req, env, url)
     if (!url.pathname.startsWith('/media/')) return env.ASSETS.fetch(req)
 
     const key = decodeURIComponent(url.pathname.slice('/media/'.length))
@@ -162,6 +265,12 @@ export async function deploySite(
   }
 
   // ---- 3. deploy the script
+  // Every deploy makes sure the comments database exists, so a blog gains
+  // comments at its next publish with no setup step. A token without D1 (a
+  // blog from before 0.2 that has not moved yet) still publishes; the page
+  // just shows no comment section until it can.
+  const commentsDb = await ensureCommentsDatabase(cf, opts.accountId, opts.scriptName).catch(() => null)
+
   const metadata = {
     main_module: 'index.js',
     compatibility_date: COMPATIBILITY_DATE,
@@ -172,6 +281,7 @@ export async function deploySite(
     bindings: [
       { type: 'assets', name: 'ASSETS' },
       { type: 'r2_bucket', name: 'MEDIA', bucket_name: opts.bucket },
+      ...(commentsDb ? [{ type: 'd1', name: 'COMMENTS', id: commentsDb }] : []),
     ],
     observability: { enabled: true },
   }

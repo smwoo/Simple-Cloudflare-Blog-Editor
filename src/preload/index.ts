@@ -58,6 +58,10 @@ const api = {
   removePost: (slug: string, media: boolean) => invoke<any>('posts:remove', { slug, media }),
   onPublishProgress: (fn: (p: any) => void) => on('publish:progress', fn),
 
+  // comments visitors left on the blog
+  listComments: (slug: string) => invoke<any>('comments:list', slug),
+  deleteComment: (id: number) => invoke<any>('comments:delete', id),
+
   // media
   pickFiles: () => invoke<string[]>('media:pick'),
   addMedia: (files: string[], postSlug: string, group: string) =>
