@@ -15,10 +15,37 @@ import { RestD1, listDatabases } from './cloudflare/d1.js'
 import { createFetchHandler } from './cloudflare/fetchHandler.js'
 import {
   findCommentsDatabase,
+  ensureCommentsDatabase,
   listComments,
   deleteComment,
   deletePostComments,
 } from './cloudflare/comments.js'
+import {
+  EMAIL,
+  MAX_EMAIL,
+  isOpen,
+  setOpen,
+  listSubscribers,
+  countSubscribers,
+  addSubscriber,
+  removeSubscriber,
+  listMailings,
+  getMailing,
+  announcedPosts,
+  forgetPost,
+  createMailing,
+  type Mailing,
+} from './cloudflare/newsletter.js'
+import {
+  CloudflareMailer,
+  ResendMailer,
+  MailError,
+  renderEmail,
+  type Mailer,
+  type Provider,
+} from './newsletter/mail.js'
+import { sendMailing, type SendResult } from './newsletter/send.js'
+import { readSender, writeSender, type SenderSettings } from './newsletter/settings.js'
 import { provision, EXISTING_BLOG, type SetupInput } from './setup.js'
 import {
   publish,
@@ -95,6 +122,7 @@ async function connect(): Promise<void> {
   config = await store.readConfig()
   const secrets = await store.readSecrets()
   commentsDbId = null
+  newsletterReady = false
   if (!config || !secrets) {
     cf = null
     r2 = null
@@ -123,9 +151,91 @@ async function commentsDb(): Promise<RestD1 | null> {
   return commentsDbId ? new RestD1(cf, config.accountId, commentsDbId) : null
 }
 
+/**
+ * The same database for the newsletter, made now if no deploy has made it yet,
+ * with its tables brought up to date once per session: the owner can set up
+ * the newsletter on a blog that has not been published since it existed.
+ */
+let newsletterReady = false
+async function newsletterDb(): Promise<RestD1> {
+  if (!cf || !config) throw new Error('not set up')
+  if (!newsletterReady || !commentsDbId) {
+    commentsDbId = await ensureCommentsDatabase(cf, config.accountId, config.name)
+    newsletterReady = true
+  }
+  return new RestD1(cf, config.accountId, commentsDbId)
+}
+
+/** The shared database, where the newsletter's sending settings live. */
+function sharedDb(): RestD1 | null {
+  return cf && config?.databaseId ? new RestD1(cf, config.accountId, config.databaseId) : null
+}
+
 function siteOrigin(): string | null {
   if (!config) return null
   return config.customDomain ? `https://${config.customDomain}` : config.siteUrl
+}
+
+async function newsletterMailer(): Promise<{ mailer: Mailer; sender: SenderSettings } | { message: string }> {
+  const shared = sharedDb()
+  if (!cf || !config || !shared) return { message: 'This blog is not set up yet.' }
+  const sender = await readSender(shared).catch(() => null)
+  if (!sender) return { message: 'Choose how emails are sent first.' }
+  if (sender.provider === 'resend') {
+    if (!sender.resendKey) return { message: 'Paste your Resend API key first.' }
+    return { mailer: new ResendMailer(sender.resendKey, sender), sender }
+  }
+  return { mailer: new CloudflareMailer(cf, config.accountId, sender), sender }
+}
+
+/** Whether the Worker online is new enough to take subscriptions. */
+async function workerHasSubscribe(): Promise<boolean> {
+  try {
+    const res = await fetch(`${siteOrigin()}/api/subscribe`, { headers: { accept: 'application/json' } })
+    return res.ok && typeof ((await res.json()) as any)?.open === 'boolean'
+  } catch {
+    return false
+  }
+}
+
+/** One mailing at a time: two at once would race for the same subscribers. */
+let sendingId: number | null = null
+
+async function runMailing(make: (db: RestD1) => Promise<Mailing>): Promise<SendResult | { ok: false; message: string; log?: string }> {
+  if (sendingId !== null) return { ok: false, message: 'An email is already being sent. Wait for it to finish.' }
+  const m = await newsletterMailer()
+  if ('message' in m) return { ok: false, message: m.message }
+  const origin = siteOrigin()!
+  const blogTitle = config!.title
+  let db: RestD1
+  let mailing: Mailing
+  try {
+    db = await newsletterDb()
+    mailing = await make(db)
+  } catch (e) {
+    return { ok: false, message: 'The newsletter could not be reached just now.', log: String(e) }
+  }
+  sendingId = mailing.id
+  try {
+    const content = {
+      blogTitle,
+      subject: mailing.subject,
+      body: mailing.body,
+      link: mailing.link,
+      linkLabel: mailing.post ? 'Read the post' : undefined,
+    }
+    return await sendMailing(
+      db,
+      m.mailer,
+      mailing.id,
+      (s) => renderEmail(content, s.email, `${origin}/api/unsubscribe?t=${s.token}`),
+      (p) => send('newsletter:progress', p),
+    )
+  } catch (e) {
+    return { ok: false, message: 'Sending stopped: the newsletter could not be reached.', log: String(e) }
+  } finally {
+    sendingId = null
+  }
 }
 
 function syncStatus() {
@@ -731,6 +841,7 @@ function registerIpc() {
     if (res.ok) {
       const db = await commentsDb().catch(() => null)
       if (db) await deletePostComments(db, args.slug).catch(() => {})
+      if (db) await forgetPost(db, args.slug).catch(() => {})
     }
     return res
   })
@@ -753,6 +864,171 @@ function registerIpc() {
       return { ok: false, message: 'The comment could not be deleted just now.', log: String(e) }
     }
   })
+
+  // ---- newsletter
+  /** Everything the newsletter screens show. The Resend key itself never leaves this process. */
+  ipcMain.handle('newsletter:status', async () => {
+    const shared = sharedDb()
+    if (!shared) {
+      return {
+        ok: false,
+        message:
+          'The newsletter needs your blog to be ready for other computers first. See "Other computers" in Settings.',
+      }
+    }
+    try {
+      const db = await newsletterDb()
+      const sender = await readSender(shared)
+      const [open, subscribers, announced, mailings] = await Promise.all([
+        isOpen(db),
+        countSubscribers(db),
+        announcedPosts(db),
+        listMailings(db, 10),
+      ])
+      return {
+        ok: true,
+        sender: sender && {
+          provider: sender.provider,
+          fromEmail: sender.fromEmail,
+          fromName: sender.fromName ?? '',
+          hasResendKey: !!sender.resendKey,
+        },
+        open,
+        subscribers,
+        announced,
+        mailings,
+        sending: sendingId,
+        customDomain: config?.customDomain ?? null,
+      }
+    } catch (e) {
+      return { ok: false, message: 'The newsletter could not be reached just now.', log: String(e) }
+    }
+  })
+
+  ipcMain.handle(
+    'newsletter:saveSender',
+    async (_e, s: { provider: Provider; fromEmail: string; fromName?: string; resendKey?: string }) => {
+      const shared = sharedDb()
+      if (!shared) return { ok: false, message: 'This blog is not ready for that yet.' }
+      const fromEmail = s.fromEmail.trim()
+      if (!EMAIL.test(fromEmail)) return { ok: false, message: 'Enter the address the emails should come from.' }
+      if (/\.workers\.dev$/i.test(fromEmail)) {
+        return { ok: false, message: 'Emails cannot come from a workers.dev address. Use an address on your own domain.' }
+      }
+      if (s.provider === 'resend' && !s.resendKey?.trim() && !(await readSender(shared))?.resendKey) {
+        return { ok: false, message: 'Paste your Resend API key.' }
+      }
+      try {
+        await writeSender(shared, { ...s, fromEmail })
+        return { ok: true }
+      } catch (e) {
+        return { ok: false, message: 'The settings could not be saved just now.', log: String(e) }
+      }
+    },
+  )
+
+  /** One email to the owner, to prove the sending address works before anyone else gets one. */
+  ipcMain.handle('newsletter:test', async (_e, to: string) => {
+    const m = await newsletterMailer()
+    if ('message' in m) return { ok: false, message: m.message }
+    if (!EMAIL.test(to.trim())) return { ok: false, message: 'Enter the address to send the test to.' }
+    const email = renderEmail(
+      {
+        blogTitle: config!.title,
+        subject: `A test from ${config!.title}`,
+        body: 'This is how emails to your subscribers will look.\n\nIf you can read this, sending works.',
+        link: siteOrigin(),
+      },
+      to.trim(),
+      `${siteOrigin()}/api/unsubscribe?t=${'0'.repeat(32)}`,
+    )
+    try {
+      await m.mailer.send([email], `test-${Date.now()}`)
+      return { ok: true }
+    } catch (e) {
+      const err = e instanceof MailError ? e : new MailError('The test email could not be sent.', 'failed', String(e))
+      return { ok: false, message: err.message, log: err.log }
+    }
+  })
+
+  /**
+   * Show or hide the box under posts. Showing it republishes the blog if the
+   * one online is from before subscriptions, so the box appears right away
+   * rather than at the next publish.
+   */
+  ipcMain.handle('newsletter:setOpen', async (_e, open: boolean) => {
+    if (!cf || !config) return { ok: false, message: 'This blog is not set up yet.' }
+    try {
+      await setOpen(await newsletterDb(), open)
+    } catch (e) {
+      return { ok: false, message: 'That could not be changed just now.', log: String(e) }
+    }
+    if (!open || (await workerHasSubscribe())) return { ok: true }
+    const blocked = await readyToDeploy()
+    if (blocked) return blocked
+    return republishSite({ config, cf, siteDir: store.paths().site }, (p) => send('publish:progress', p))
+  })
+
+  ipcMain.handle('newsletter:subscribers', async () => {
+    try {
+      const list = await listSubscribers(await newsletterDb())
+      return { ok: true, subscribers: list.map(({ id, email, at }) => ({ id, email, at })) }
+    } catch (e) {
+      return { ok: false, message: 'Subscribers could not be loaded just now.', log: String(e) }
+    }
+  })
+  ipcMain.handle('newsletter:add', async (_e, email: string) => {
+    const address = email.trim()
+    if (!EMAIL.test(address) || address.length > MAX_EMAIL) {
+      return { ok: false, message: `"${address}" does not look like an email address.` }
+    }
+    try {
+      const added = await addSubscriber(await newsletterDb(), address)
+      return added ? { ok: true } : { ok: false, message: `${address} is already subscribed.` }
+    } catch (e) {
+      return { ok: false, message: 'That address could not be added just now.', log: String(e) }
+    }
+  })
+  ipcMain.handle('newsletter:remove', async (_e, id: number) => {
+    try {
+      await removeSubscriber(await newsletterDb(), id)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, message: 'That address could not be removed just now.', log: String(e) }
+    }
+  })
+
+  /** An email the owner wrote, to everyone. */
+  ipcMain.handle('newsletter:send', async (_e, msg: { subject: string; body: string }) => {
+    const subject = msg.subject.trim()
+    const body = msg.body.trim()
+    if (!subject || !body) return { ok: false, message: 'Write a subject and a message first.' }
+    return runMailing(async (db) => createMailing(db, { subject, body }))
+  })
+
+  /** "There is a new post": once per post, however many times it is asked for. */
+  ipcMain.handle('newsletter:announce', async (_e, slug: string) => {
+    const post = await readPost(store.paths().site, slug)
+    if (!post || post.frontMatter.draft) return { ok: false, message: 'Publish the post first.' }
+    const title = post.frontMatter.title.trim()
+    return runMailing(async (db) =>
+      createMailing(db, {
+        post: slug,
+        subject: title,
+        body: post.frontMatter.description?.trim() || `There is a new post on ${config!.title}.`,
+        link: `${siteOrigin()}/posts/${slug}/`,
+      }),
+    )
+  })
+
+  /** Carry on with a mailing that stopped at a limit. */
+  ipcMain.handle('newsletter:resume', async (_e, mailingId: number) =>
+    runMailing(async (db) => {
+      const m = await getMailing(db, mailingId)
+      if (!m) throw new Error(`no mailing ${mailingId}`)
+      return m
+    }),
+  )
 
   // ---- media
   ipcMain.handle('media:pick', async () => {

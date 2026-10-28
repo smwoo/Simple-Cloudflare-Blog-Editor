@@ -17,6 +17,11 @@ export class FakeD1 implements D1 {
     if (/^\s*(SELECT|WITH)/i.test(sql)) {
       return { rows: stmt.all(...params) as T[], changes: 0 }
     }
+    // Like D1, a write with RETURNING answers with its rows.
+    if (/\bRETURNING\b/i.test(sql)) {
+      const rows = stmt.all(...params) as T[]
+      return { rows, changes: rows.length }
+    }
     const r = stmt.run(...params)
     return { rows: [], changes: Number(r.changes) }
   }

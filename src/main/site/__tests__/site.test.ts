@@ -251,6 +251,53 @@ describe('hugo build', () => {
     expect((off.doc.getElementById('comments') as any).hidden).toBe(true)
   })
 
+  it('ends each post with a subscribe box that shows only while the owner has it on', async () => {
+    if (!hugoOk) return
+    await build(dir)
+    const html = await readFile(path.join(dir, 'public', 'posts', 'nov-2026', 'index.html'), 'utf8')
+    expect(html).toMatch(/<section class=subscribe id=subscribe hidden>/)
+    const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+      .map((m) => m[1])
+      .find((s) => s.includes('/api/subscribe'))!
+
+    const open = async (answer: (init?: RequestInit) => Response) => {
+      const window = new Window()
+      window.document.write(html.replace(/<script>[\s\S]*?<\/script>/g, ''))
+      const sent: any[] = []
+      const fetch = async (_url: string, init?: RequestInit) => {
+        if (init?.body) sent.push(JSON.parse(init.body as string))
+        return answer(init)
+      }
+      new Function('document', 'fetch', script)(window.document, fetch)
+      await new Promise((r) => setTimeout(r, 20))
+      return { box: window.document.getElementById('subscribe') as any, sent, window }
+    }
+    const json = (data: object, status = 200) => new Response(JSON.stringify(data), { status })
+
+    const { box, sent, window } = await open((init) =>
+      init?.method === 'POST' ? json({ ok: true }, 201) : json({ open: true }),
+    )
+    expect(box.hidden).toBe(false)
+    const form = box.querySelector('form')
+    form.querySelector('[name=email]').value = 'bob@example.com'
+    form.dispatchEvent(new window.Event('submit', { cancelable: true }))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(sent).toEqual([{ email: 'bob@example.com', website: '' }])
+    expect(form.hidden).toBe(true)
+    expect(box.querySelector('.msg').textContent).toMatch(/Thanks/)
+
+    const refused = await open((init) =>
+      init?.method === 'POST' ? json({ error: 'Please check your email address.' }, 400) : json({ open: true }),
+    )
+    refused.box.querySelector('form').dispatchEvent(new refused.window.Event('submit', { cancelable: true }))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(refused.box.querySelector('.msg').textContent).toBe('Please check your email address.')
+    expect(refused.box.querySelector('form').hidden).toBe(false)
+
+    expect((await open(() => json({ open: false }))).box.hidden).toBe(true)
+    expect((await open(() => new Response('Not found', { status: 404 }))).box.hidden).toBe(true)
+  })
+
   it('excludes drafts from a normal build but keeps them on disk', async () => {
     if (!hugoOk) return
     await writePost(dir, {

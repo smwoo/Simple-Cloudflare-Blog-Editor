@@ -8,4 +8,5 @@ export const PERMISSIONS = [
   ['Account', 'Workers Scripts', 'Edit'],
   ['Account', 'D1', 'Edit'],
   ['Zone (optional)', 'Zone', 'Read'],
+  ['Account (optional, for the newsletter)', 'Email Sending', 'Edit'],
 ]

@@ -43,6 +43,9 @@ export function App() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [showComments, setShowComments] = useState(false)
   const [previewOrigin, setPreviewOrigin] = useState<string | null>(null)
+  const [newsletter, setNewsletter] = useState<any>(null)
+  /** Email subscribers when this publish succeeds. Off unless asked for: an email cannot be taken back. */
+  const [notify, setNotify] = useState(false)
   const [sync, setSync] = useState<any>(null)
   /** Bumped when another computer's version replaces the open post, to reload the editor. */
   const [reloads, setReloads] = useState(0)
@@ -78,6 +81,12 @@ export function App() {
   )
 
   useEffect(() => window.api.onPublishProgress((p) => setPublishing(publishLabel(p))), [])
+
+  const loadNewsletter = useCallback(async () => setNewsletter(await window.api.newsletterStatus()), [])
+  useEffect(() => {
+    if (status?.configured) loadNewsletter()
+  }, [status, loadNewsletter])
+  useEffect(() => setNotify(false), [current?.slug])
 
   // ---------------------------------------------------------------- sharing
 
@@ -237,7 +246,29 @@ export function App() {
     const res = await window.api.publish(post)
     setPublishing(null)
 
-    if (res.ok) {
+    if (res.ok && notify && canNotify(post.slug)) {
+      setNotify(false)
+      setPublishing('Emailing subscribers…')
+      const off = window.api.onNewsletterProgress((p) => setPublishing(`Emailing ${p.sent} of ${p.total}…`))
+      const sent = await window.api.announcePost(post.slug).finally(off)
+      setPublishing(null)
+      await loadNewsletter()
+      setBanner(
+        sent.ok
+          ? { kind: 'ok', text: `Published, and emailed ${sent.mailing.total} subscriber${sent.mailing.total === 1 ? '' : 's'}.` }
+          : {
+              kind: 'warn',
+              text:
+                `Published, but ` +
+                (sent.mailing
+                  ? `only ${sent.mailing.sent} of ${sent.mailing.total} subscribers were emailed. ${sent.message}` +
+                    (sent.resumable ? ' Send the rest later from Settings → Newsletter.' : '')
+                  : `subscribers were not emailed. ${sent.message}`),
+              log: sent.log,
+            },
+      )
+      await refresh()
+    } else if (res.ok) {
       setBanner({ kind: 'ok', text: 'Published.' })
       await refresh()
     } else {
@@ -324,6 +355,16 @@ export function App() {
   }
 
   const config: BlogConfig = status.config
+
+  /** Offered until a post has had its email, and only once there is someone to send it to. */
+  function canNotify(slug: string) {
+    return (
+      !!newsletter?.ok &&
+      !!newsletter.sender &&
+      newsletter.subscribers > 0 &&
+      !newsletter.announced.includes(slug)
+    )
+  }
   const groupSuggestions = [
     ...new Set(assets.filter((a) => a.postSlug === current?.slug).map((a) => a.group)),
   ]
@@ -503,6 +544,17 @@ export function App() {
               )}
               {!current.frontMatter.draft && <button onClick={() => setShowComments(true)}>Comments</button>}
               <button onClick={togglePreview}>Preview</button>
+              {canNotify(current.slug) && (
+                <label className="notify" title="Send subscribers an email with a link to this post">
+                  <input
+                    type="checkbox"
+                    checked={notify}
+                    disabled={!!publishing}
+                    onChange={(e) => setNotify(e.target.checked)}
+                  />
+                  Email {newsletter.subscribers} subscriber{newsletter.subscribers === 1 ? '' : 's'}
+                </label>
+              )}
               <button className="primary" onClick={doPublish} disabled={!!publishing}>
                 {publishing ?? (current.frontMatter.draft ? 'Publish' : 'Update')}
               </button>
@@ -543,7 +595,15 @@ export function App() {
           onClose={() => setShowComments(false)}
         />
       )}
-      {showSettings && <Settings config={config} onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <Settings
+          config={config}
+          onClose={() => {
+            setShowSettings(false)
+            loadNewsletter()
+          }}
+        />
+      )}
     </div>
   )
 }

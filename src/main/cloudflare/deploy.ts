@@ -23,19 +23,30 @@ const COMPATIBILITY_DATE = '2026-07-26'
 
 /**
  * The Worker: static assets, /media/* read from the R2 binding, and
- * /api/comments backed by the comments database (see comments.ts).
+ * /api/comments, /api/subscribe and /api/unsubscribe backed by the visitors'
+ * database (see comments.ts and newsletter.ts).
  *
  * Comment rules enforced here, since the page's script is only a courtesy:
  * the post must be a published page, a reply always joins the top comment's
  * thread, lengths are capped, and one address can post a few per ten minutes.
  * POST demands a JSON body, which a form on another site cannot send without
  * a CORS preflight this Worker never answers.
+ *
+ * Subscribing follows the same rules, works only while the owner has the box
+ * turned on, and answers the same whether or not the address was already on
+ * the list, so the box cannot tell anyone who subscribed. Unsubscribing takes
+ * the token from the email's link: opening the link only asks, since mail
+ * scanners open links, and the button (or a mail app's one-click unsubscribe,
+ * RFC 8058) is the POST that removes the address.
  */
 export const WORKER_SOURCE = `const MAX_NAME = 60
 const MAX_BODY = 2000
 const RATE_WINDOW_MS = 10 * 60 * 1000
 const RATE_MAX = 5
 const SLUG = /^[a-z0-9][a-z0-9-]{0,119}$/
+const MAX_EMAIL = 254
+const EMAIL = /^[^\\s@<>"]+@[^\\s@<>"]+\\.[^\\s@<>"]+$/
+const TOKEN = /^[0-9a-f]{32}$/
 
 function json(data, status) {
   return new Response(JSON.stringify(data), {
@@ -123,10 +134,99 @@ async function comments(req, env, url) {
   return json({ comment: row }, 201)
 }
 
+function newToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function subscribe(req, env) {
+  if (!env.COMMENTS) return json({ error: 'Subscribing is not available.' }, 503)
+  const db = env.COMMENTS
+  const state = await db.prepare('SELECT open FROM newsletter WHERE id = 1').first().catch(() => null)
+  const open = !!state && state.open === 1
+  if (req.method === 'GET') return json({ open })
+  if (req.method !== 'POST') return json({ error: 'Method not allowed.' }, 405)
+  if (!open) return json({ error: 'Subscribing is not available.' }, 404)
+  if (!/^application\\/json/i.test(req.headers.get('content-type') || '')) {
+    return json({ error: 'Expected JSON.' }, 415)
+  }
+  const raw = await req.text()
+  if (raw.length > 2000) return json({ error: 'Please check your email address.' }, 413)
+  let input
+  try {
+    input = JSON.parse(raw)
+  } catch (e) {
+    return json({ error: 'Expected JSON.' }, 400)
+  }
+  if (!input || typeof input !== 'object') return json({ error: 'Expected JSON.' }, 400)
+  if (input.website) return json({ ok: true }, 201)
+
+  const email = typeof input.email === 'string' ? input.email.trim() : ''
+  if (!email || email.length > MAX_EMAIL || !EMAIL.test(email)) {
+    return json({ error: 'Please check your email address.' }, 400)
+  }
+
+  const now = Date.now()
+  const hash = await ipHash(req)
+  const recent = await db
+    .prepare('SELECT COUNT(*) AS n FROM subscribers WHERE ip_hash = ? AND created_at > ?')
+    .bind(hash, now - RATE_WINDOW_MS)
+    .first()
+  if (recent && recent.n >= RATE_MAX) {
+    return json({ error: 'Too many sign-ups from here just now. Please wait a few minutes.' }, 429)
+  }
+
+  await db
+    .prepare('INSERT OR IGNORE INTO subscribers (email, token, ip_hash, created_at) VALUES (?, ?, ?, ?)')
+    .bind(email, newToken(), hash, now)
+    .run()
+  return json({ ok: true }, 201)
+}
+
+function page(title, body, status) {
+  return new Response(
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+      '<meta name="robots" content="noindex, nofollow"><title>' + title + '</title>' +
+      '<style>body{font-family:ui-sans-serif,system-ui,sans-serif;max-width:32rem;margin:15vh auto;' +
+      'padding:0 20px;line-height:1.5;color:#1f2328;background:#fff}' +
+      '@media (prefers-color-scheme:dark){body{color:#e6e6e6;background:#16181c}}' +
+      'h1{font-size:1.4rem}a{color:#2563eb}button{font:inherit;padding:9px 18px;border-radius:8px;' +
+      'border:0;background:#2563eb;color:#fff;cursor:pointer}</style></head><body><main><h1>' +
+      title + '</h1>' + body + '<p><a href="/">Go to the blog</a></p></main></body></html>',
+    {
+      status: status || 200,
+      headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+    },
+  )
+}
+
+async function unsubscribe(req, env, url) {
+  const token = url.searchParams.get('t') || ''
+  if (!env.COMMENTS || !TOKEN.test(token)) {
+    return page('That link does not work', '<p>Try the unsubscribe link in a newer email.</p>', 400)
+  }
+  const db = env.COMMENTS
+  if (req.method === 'POST') {
+    await db.prepare('DELETE FROM subscribers WHERE token = ?').bind(token).run()
+    return page('You are unsubscribed', '<p>You will not get any more emails from this blog.</p>')
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') return page('Method not allowed', '', 405)
+  const row = await db.prepare('SELECT id FROM subscribers WHERE token = ?').bind(token).first()
+  if (!row) return page('You are unsubscribed', '<p>This address is not on the list any more.</p>')
+  return page(
+    'Unsubscribe?',
+    '<p>You will stop getting an email when there is a new post.</p>' +
+      '<form method="post"><button type="submit">Unsubscribe</button></form>',
+  )
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url)
     if (url.pathname === '/api/comments') return comments(req, env, url)
+    if (url.pathname === '/api/subscribe') return subscribe(req, env)
+    if (url.pathname === '/api/unsubscribe') return unsubscribe(req, env, url)
     if (!url.pathname.startsWith('/media/')) return env.ASSETS.fetch(req)
 
     const key = decodeURIComponent(url.pathname.slice('/media/'.length))
@@ -266,7 +366,7 @@ export async function deploySite(
 
   // ---- 3. deploy the script
   // Every deploy makes sure the comments database exists, so a blog gains
-  // comments at its next publish with no setup step. A token without D1 (a
+  // comments and subscriptions at its next publish with no setup step. A token without D1 (a
   // blog from before 0.2 that has not moved yet) still publishes; the page
   // just shows no comment section until it can.
   const commentsDb = await ensureCommentsDatabase(cf, opts.accountId, opts.scriptName).catch(() => null)

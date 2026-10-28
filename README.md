@@ -90,6 +90,14 @@ When it finishes, your blog is live at an address like
   their name, and reply to a comment to start a conversation under it. To remove
   a comment you do not want, open the post and press **Comments**. Blogs set up
   before comments existed get them the next time you publish.
+- **Newsletter:** visitors can leave their email address at the end of a post to
+  hear about new ones. Set it up in **Settings** → **Newsletter**: choose how the
+  emails are sent (your Cloudflare account, or a free [Resend](https://resend.com)
+  account), turn on the box under posts, and send yourself a test. When you
+  publish, tick **Email subscribers** beside **Publish**. In the same Settings
+  screen you can write an email to all subscribers and remove addresses.
+  Every email has an unsubscribe link. This needs your own web address (see
+  below). See [NEWSLETTER.md](./NEWSLETTER.md) for the setup on each service.
 
 ## Good to know
 
@@ -157,7 +165,7 @@ domain, a second hostname and a DNS record from setup entirely.
 npm install
 node scripts/fetch-binaries.mjs   # hugo + ffmpeg >= 8 into resources/bin/
 npm run dev                       # Electron with HMR
-npm test                          # 77 tests
+npm test                          # 176 tests
 npm run typecheck
 npm run smoke                      # build, render once, screenshot, assert no console errors
 ```
@@ -196,6 +204,7 @@ src/main/        Electron main
   media/         ffmpeg wrapper, conversion pipeline, job queue
   site/          Hugo scaffold, build, preview server
   db/            config + secrets store, asset library
+  newsletter/    email rendering, Cloudflare + Resend senders, resumable send
   setup.ts       provisioning
   publish.ts     publish + source backup
   domain.ts      custom domain attachment

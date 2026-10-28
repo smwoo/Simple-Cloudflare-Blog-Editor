@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { Newsletter } from './Newsletter.js'
 
 interface Health {
   id: string
@@ -38,6 +39,13 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
   const [disconnectBusy, setDisconnectBusy] = useState(false)
   const [unfinished, setUnfinished] = useState<{ unsent: number; uploading: number } | null>(null)
+  const [showNewsletter, setShowNewsletter] = useState(false)
+  const [newsletter, setNewsletter] = useState<any>(null)
+
+  const loadNewsletter = () => window.api.newsletterStatus().then(setNewsletter)
+  useEffect(() => {
+    loadNewsletter()
+  }, [])
 
   /** On success the app restarts, so only the "not yet" answer comes back. */
   const disconnect = async (force: boolean) => {
@@ -311,6 +319,24 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
         </div>
 
         <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong style={{ fontSize: 13 }}>Newsletter</strong>
+            <button onClick={() => setShowNewsletter(true)}>Open newsletter…</button>
+          </div>
+          <p className="hint">
+            {newsletter === null
+              ? 'Email your readers when there is a new post.'
+              : !newsletter.ok
+                ? newsletter.message
+                : [
+                    `${newsletter.subscribers} subscriber${newsletter.subscribers === 1 ? '' : 's'}`,
+                    newsletter.open ? 'box shown under posts' : 'box not shown under posts',
+                    newsletter.sender ? `sent with ${newsletter.sender.provider === 'resend' ? 'Resend' : 'Cloudflare'}` : 'sending not set up',
+                  ].join(' · ')}
+          </p>
+        </div>
+
+        <div className="card">
           <strong style={{ fontSize: 13 }}>This computer</strong>
           <p className="hint">
             Disconnect to use this computer with a different blog. The blog itself is not touched
@@ -370,6 +396,14 @@ export function Settings({ onClose, config: initialConfig }: { onClose: () => vo
           </button>
         </div>
       </div>
+      {showNewsletter && (
+        <Newsletter
+          onClose={() => {
+            setShowNewsletter(false)
+            loadNewsletter()
+          }}
+        />
+      )}
     </div>
   )
 }

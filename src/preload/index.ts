@@ -62,6 +62,22 @@ const api = {
   listComments: (slug: string) => invoke<any>('comments:list', slug),
   deleteComment: (id: number) => invoke<any>('comments:delete', id),
 
+  // the newsletter: subscribers, how it is sent, and sending
+  newsletterStatus: () => invoke<any>('newsletter:status'),
+  /** The Resend key goes in only; leaving it out keeps the saved one. */
+  saveNewsletterSender: (s: { provider: 'cloudflare' | 'resend'; fromEmail: string; fromName?: string; resendKey?: string }) =>
+    invoke<any>('newsletter:saveSender', s),
+  sendTestEmail: (to: string) => invoke<any>('newsletter:test', to),
+  setSubscribeOpen: (open: boolean) => invoke<any>('newsletter:setOpen', open),
+  listSubscribers: () => invoke<any>('newsletter:subscribers'),
+  addSubscriber: (email: string) => invoke<any>('newsletter:add', email),
+  removeSubscriber: (id: number) => invoke<any>('newsletter:remove', id),
+  sendNewsletter: (msg: { subject: string; body: string }) => invoke<any>('newsletter:send', msg),
+  announcePost: (slug: string) => invoke<any>('newsletter:announce', slug),
+  resumeMailing: (id: number) => invoke<any>('newsletter:resume', id),
+  onNewsletterProgress: (fn: (p: { mailingId: number; sent: number; total: number }) => void) =>
+    on('newsletter:progress', fn),
+
   // media
   pickFiles: () => invoke<string[]>('media:pick'),
   addMedia: (files: string[], postSlug: string, group: string) =>

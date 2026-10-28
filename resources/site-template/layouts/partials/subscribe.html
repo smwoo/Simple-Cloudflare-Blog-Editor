@@ -1,0 +1,33 @@
+{{- /*
+  The subscribe box at the end of a post, sent to the Worker's /api/subscribe.
+  It stays hidden unless the Worker says the owner has it turned on, so the
+  app's preview and a blog without a newsletter show nothing.
+*/ -}}
+<section class="subscribe" id="subscribe" hidden>
+  <h2>Get new posts by email</h2>
+  <p class="hint">One email when there is a new post. Unsubscribe any time from the email.</p>
+  <form>
+    <input name="email" type="email" placeholder="Your email address" maxlength="254" required autocomplete="email">
+    <input name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <button type="submit">Subscribe</button>
+  </form>
+  <p class="msg" role="status"></p>
+</section>
+<script>
+(function(){
+  var box=document.getElementById('subscribe');
+  if(!box)return;
+  var f=box.querySelector('form'),msg=box.querySelector('.msg'),go=f.querySelector('button');
+  fetch('/api/subscribe').then(function(r){if(!r.ok)throw 0;return r.json()})
+    .then(function(j){if(j.open)box.hidden=false}).catch(function(){});
+  f.addEventListener('submit',function(e){
+    e.preventDefault();msg.textContent='';msg.className='msg';go.disabled=true;
+    fetch('/api/subscribe',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({email:f.elements.email.value,website:f.elements.website.value})})
+      .then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'');return j})})
+      .then(function(){f.hidden=true;msg.textContent='Thanks! You will get an email when there is a new post.'})
+      .catch(function(x){msg.className='msg err';msg.textContent=x.message||'That did not work. Please try again.'})
+      .then(function(){go.disabled=false});
+  });
+})();
+</script>

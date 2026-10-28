@@ -1,15 +1,17 @@
 /**
- * Comments: the one thing visitors write to the blog.
+ * Comments: what visitors write to the blog, with newsletter subscriptions
+ * (see newsletter.ts).
  *
  * They live in their own database, not the shared one. The Worker has to bind
  * this one to accept comments, and the shared one holds the storage keys, so
- * keeping them apart means the public site can reach comments and nothing else.
+ * keeping them apart means the public site can reach visitors' data and nothing else.
  *
  * Threads are one level deep: a comment, then its replies in order. A reply to
  * a reply joins the same thread, so `parent_id` always names a top comment.
  */
 import type { CloudflareClient } from './api.js'
 import { RestD1, ensureDatabase, listDatabases, type D1 } from './d1.js'
+import { NEWSLETTER_SCHEMA_SQL } from './newsletter.js'
 
 export const COMMENTS_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS comments (
@@ -35,7 +37,7 @@ export async function ensureCommentsDatabase(
   blogName: string,
 ): Promise<string> {
   const database = await ensureDatabase(cf, accountId, commentsDatabaseName(blogName))
-  await new RestD1(cf, accountId, database.uuid).exec(COMMENTS_SCHEMA_SQL)
+  await new RestD1(cf, accountId, database.uuid).exec(COMMENTS_SCHEMA_SQL + NEWSLETTER_SCHEMA_SQL)
   return database.uuid
 }
 
